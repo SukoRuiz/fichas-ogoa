@@ -4,6 +4,8 @@ Web sencilla para que el Director de Juego cree, rellene e imprima fichas de per
 
 No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) que se publican gratis con **GitHub Pages**.
 
+**Acceso:** <https://sukoruiz.github.io/fichas-ogoa/>
+
 ## Uso
 
 - **+ Nueva ficha** crea una ficha en blanco. Todo se guarda solo mientras escribes.
@@ -32,7 +34,9 @@ Las fichas se guardan **en el navegador** que las crea (IndexedDB), no en GitHub
    git push -u origin main
    ```
 3. En GitHub: **Settings → Pages → Build and deployment → Source: Deploy from a branch**, rama `main`, carpeta `/ (root)` → **Save**.
-4. En un minuto estará en `https://TU_USUARIO.github.io/fichas-ogoa/`.
+4. En un minuto estará en `https://TU_USUARIO.github.io/fichas-ogoa/` (la de este repositorio: <https://sukoruiz.github.io/fichas-ogoa/>).
+
+Después, cada `git push` a `main` actualiza la web automáticamente en uno o dos minutos.
 
 ## Probar en local
 
