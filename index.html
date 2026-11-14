@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fichas · Old Gods of Appalachia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400;1,600&family=IM+Fell+English+SC&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-print="both">
+<aside id="side">
+  <header>
+    <div class="kicker">Old Gods of Appalachia</div>
+    <h1>Fichas de personaje</h1>
+  </header>
+  <button id="btn-new" class="primary">+ Nueva ficha</button>
+  <label class="player-field">Jugador de la ficha abierta <small>(no se imprime)</small>
+    <input id="player" type="text" placeholder="Nombre del jugador" autocomplete="off">
+  </label>
+  <ul id="list"></ul>
+  <div class="actions">
+    <div class="status" id="status">—</div>
+    <label class="print-sel">Imprimir
+      <select id="print-what">
+        <option value="both">Ambas caras</option>
+        <option value="front">Solo anverso</option>
+        <option value="back">Solo reverso</option>
+      </select>
+    </label>
+    <button id="btn-print" class="primary">Imprimir</button>
+    <div class="row">
+      <button id="btn-dup">Duplicar</button>
+      <button id="btn-del" class="danger">Borrar</button>
+    </div>
+    <div class="row">
+      <button id="btn-export" title="Descarga esta ficha como .json">Exportar ficha</button>
+      <button id="btn-export-all" title="Descarga todas las fichas en un solo .json (copia de seguridad)">Exportar todas</button>
+    </div>
+    <button id="btn-import" title="Carga fichas desde un .json exportado">Importar .json</button>
+    <p class="note">Las fichas se guardan en este navegador. Para usarlas en otro PC, exporta y luego importa allí.</p>
+    <input type="file" id="import-file" accept="application/json,.json" multiple hidden>
+    <details class="help">
+      <summary>Formato de los textos largos</summary>
+      <p>Las cajas grandes usan Markdown. Haz clic para editar, clic fuera o <kbd>Esc</kbd> para terminar.</p>
+      <pre>**negrita**   *cursiva*
+- elemento de lista
+  - sublista
+1. lista numerada
+### Encabezado
+---  (línea separadora)
+&gt; cita</pre>
+      <p><kbd>Ctrl</kbd>+<kbd>B</kbd> negrita · <kbd>Ctrl</kbd>+<kbd>I</kbd> cursiva</p>
+    </details>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="sheet" id="front"><img class="bg" src="img/anverso.jpg" alt=""></div>
+  <div class="sheet" id="back"><img class="bg" src="img/reverso.jpg" alt=""></div>
+</main>
+
+<input type="file" id="portrait-file" accept="image/*" hidden>
+<script src="app.js"></script>
+</body>
+</html>
