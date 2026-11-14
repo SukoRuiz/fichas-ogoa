@@ -86,6 +86,53 @@ aside button:disabled { opacity: .45; cursor: default; }
 .help pre { background: #0e0a07; padding: 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; color: var(--side-fg); }
 kbd { font: 11px monospace; border: 1px solid #5a4533; border-radius: 3px; padding: 0 3px; }
 
+.user { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12.5px; color: var(--side-mute); margin-top: 2px; }
+.user span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user button { padding: 2px 8px; font-size: 12px; }
+#btn-migrate { background: #2d3a24; border-color: #4f6a3c; white-space: normal; text-align: left; }
+#btn-migrate:hover { background: #3a4b2f; }
+
+/* ---------------- inicio de sesión ---------------- */
+.login {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(ellipse at top, #2e231a, #0e0a07 70%);
+  color: var(--side-fg);
+}
+.login[hidden] { display: none; }
+.login-card {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 26px;
+  background: var(--side-bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, .6);
+  text-align: center;
+}
+.login-card h1 { margin: 0; font-weight: 600; font-size: 26px; }
+.login-card p { margin: 0; }
+.login-card .small { font-size: 13px; color: var(--side-mute); }
+.login-card button {
+  font: 600 16px var(--font);
+  color: var(--side-fg);
+  background: #241b14;
+  border: 1px solid #4a3a2c;
+  border-radius: 6px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+.login-card button.primary { background: var(--rust); border-color: #9a4430; color: #fff3e6; }
+.login-card button:hover { filter: brightness(1.15); }
+.busy { width: 26px; height: 26px; margin: 0 auto; border: 3px solid #4a3a2c; border-top-color: var(--rust); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ---------------- hojas ---------------- */
 main {
   flex: 1;
@@ -279,7 +326,7 @@ textarea.md-edit {
 @page { size: landscape; margin: 5mm; }
 @media print {
   html, body { height: auto; background: #fff; display: block; }
-  aside, .p-ctrl, .md-tools, textarea.md-edit { display: none !important; }
+  aside, .p-ctrl, .md-tools, textarea.md-edit, .login { display: none !important; }
   main { display: block; height: auto; overflow: visible; padding: 0; }
   .sheet {
     zoom: .84 !important;

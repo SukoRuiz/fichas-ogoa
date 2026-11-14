@@ -1,56 +1,11 @@
 /* Fichas de personaje · Old Gods of Appalachia
- * Web estática: los datos se guardan en IndexedDB (en el navegador).
- * Exportar / Importar JSON para moverlos entre ordenadores.
+ * Web estática (GitHub Pages). Los datos se guardan en Firebase (Firestore)
+ * y solo pueden verlos las cuentas de Google autorizadas en las reglas.
  */
-'use strict';
+import { Cloud as Store, LocalStore, Auth } from './store.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-
-/* =====================================================================
- * Almacenamiento (IndexedDB)
- * ===================================================================== */
-const Store = (() => {
-  const DB = 'ogoa-fichas', ST = 'characters';
-  let dbp;
-  function open() {
-    if (!dbp) dbp = new Promise((res, rej) => {
-      const r = indexedDB.open(DB, 1);
-      r.onupgradeneeded = () => r.result.createObjectStore(ST, { keyPath: 'id', autoIncrement: true });
-      r.onsuccess = () => res(r.result);
-      r.onerror = () => rej(r.error);
-    });
-    return dbp;
-  }
-  async function tx(mode, fn) {
-    const db = await open();
-    return new Promise((res, rej) => {
-      const t = db.transaction(ST, mode);
-      const req = fn(t.objectStore(ST));
-      t.oncomplete = () => res(req && req.result);
-      t.onerror = () => rej(t.error);
-      t.onabort = () => rej(t.error);
-    });
-  }
-  const now = () => new Date().toISOString();
-  return {
-    all: () => tx('readonly', s => s.getAll()),
-    get: id => tx('readonly', s => s.get(id)),
-    async create(data, portrait = null) {
-      const rec = { data, portrait, created_at: now(), updated_at: now() };
-      rec.id = await tx('readwrite', s => s.add(rec));
-      return rec;
-    },
-    async update(id, patch) {
-      const rec = await this.get(id);
-      if (!rec) throw new Error('La ficha no existe');
-      Object.assign(rec, patch, { updated_at: now() });
-      await tx('readwrite', s => s.put(rec));
-      return rec;
-    },
-    remove: id => tx('readwrite', s => s.delete(id)),
-  };
-})();
 
 /* =====================================================================
  * Modelo de datos
@@ -490,26 +445,46 @@ function showPortrait() {
   const p = state.data.portraitPos || { x: 50, y: 50 };
   img.style.objectPosition = `${p.x}% ${p.y}%`;
 }
-function loadPortrait(file) {
+/** Reduce una imagen a JPEG de como mucho ~600 KB (límite de Firestore: 1 MB por documento). */
+function compressImage(src) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => {
+      let max = 1100, q = 0.86, out;
+      do {
+        const k = Math.min(1, max / Math.max(im.width, im.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(im.width * k);
+        c.height = Math.round(im.height * k);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(im, 0, 0, c.width, c.height);
+        out = c.toDataURL('image/jpeg', q);
+        if (q > 0.6) q -= 0.08; else max = Math.round(max * 0.8);
+      } while (out.length > 600000 && max > 200);
+      resolve(out);
+    };
+    im.onerror = () => reject(new Error('No se pudo leer la imagen'));
+    im.src = src;
+  });
+}
+async function shrinkPortrait(dataURL) {
+  if (!dataURL) return null;
+  return dataURL.length <= 600000 ? dataURL : compressImage(dataURL);
+}
+async function loadPortrait(file) {
   const url = URL.createObjectURL(file);
-  const im = new Image();
-  im.onload = () => {
-    const MAX = 1400;
-    const k = Math.min(1, MAX / Math.max(im.width, im.height));
-    const c = document.createElement('canvas');
-    c.width = Math.round(im.width * k);
-    c.height = Math.round(im.height * k);
-    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
-    const png = /png|gif|webp/.test(file.type);
-    state.portrait = c.toDataURL(png ? 'image/png' : 'image/jpeg', 0.88);
-    if (png && state.portrait.length > 3e6) state.portrait = c.toDataURL('image/jpeg', 0.88);
-    URL.revokeObjectURL(url);
+  try {
+    state.portrait = await compressImage(url);
     state.data.portraitPos = { x: 50, y: 50 };
     showPortrait();
     savePortrait();
-  };
-  im.onerror = () => { URL.revokeObjectURL(url); status('No se pudo leer la imagen', true); };
-  im.src = url;
+  } catch (e) {
+    status(e.message, true);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /* =====================================================================
@@ -530,7 +505,7 @@ function changed(path) {
   dirty = true;
   status('Cambios sin guardar…');
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(save, 700);
+  saveTimer = setTimeout(save, 1500);
   if (['name', 'player', 'descriptor', 'type', 'focus'].includes(path)) updateListItem();
 }
 async function save() {
@@ -539,7 +514,7 @@ async function save() {
   dirty = false;
   try {
     await Store.update(state.id, { data: state.data });
-    status('Guardado ' + new Date().toLocaleTimeString());
+    status('Guardado en la nube ' + new Date().toLocaleTimeString());
   } catch (e) {
     dirty = true;
     status('Error al guardar: ' + e.message, true);
@@ -547,6 +522,8 @@ async function save() {
 }
 async function savePortrait() {
   try {
+    clearTimeout(saveTimer);
+    dirty = false;
     await Store.update(state.id, { portrait: state.portrait, data: state.data });
     status('Retrato guardado');
   } catch (e) { status('Error al guardar el retrato: ' + e.message, true); }
@@ -560,8 +537,9 @@ function status(msg, err = false) {
 async function open(id) {
   await save();
   if (editor) closeEditor();
+  status('Abriendo…');
   const rec = await Store.get(id);
-  if (!rec) return;
+  if (!rec) { status('La ficha ya no existe', true); await refreshList(); return; }
   state.id = rec.id;
   state.data = normalize(rec.data);
   state.portrait = rec.portrait || null;
@@ -576,7 +554,7 @@ async function open(id) {
 const subtitle = d => [d.player, [d.descriptor, d.type].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || 'sin definir';
 async function refreshList() {
   const recs = await Store.all();
-  recs.sort((a, b) => (a.data.name || '').localeCompare(b.data.name || '', 'es', { sensitivity: 'base' }) || a.id - b.id);
+  recs.sort((a, b) => (a.data.name || '').localeCompare(b.data.name || '', 'es', { sensitivity: 'base' }) || String(a.id).localeCompare(String(b.id)));
   const ul = $('#list');
   ul.innerHTML = '';
   for (const r of recs) {
@@ -594,7 +572,7 @@ async function refreshList() {
   return recs;
 }
 function markActive() {
-  $$('#list li').forEach(li => li.classList.toggle('active', +li.dataset.id === state.id));
+  $$('#list li').forEach(li => li.classList.toggle('active', li.dataset.id === state.id));
 }
 function updateListItem() {
   const li = $(`#list li[data-id="${state.id}"]`);
@@ -634,7 +612,7 @@ async function importFiles(files) {
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
         const data = it.data && typeof it.data === 'object' ? it.data : it;
-        const rec = await Store.create(normalize(data), it.portrait || null);
+        const rec = await Store.create(normalize(data), await shrinkPortrait(it.portrait || null));
         firstId ??= rec.id;
         n++;
       }
@@ -691,7 +669,9 @@ async function init() {
   });
   $('#btn-export-all').addEventListener('click', async () => {
     await save();
-    const recs = await Store.all();
+    status('Preparando copia…');
+    const recs = await Promise.all((await Store.all()).map(r => Store.get(r.id)));
+    status('Copia descargada');
     const stamp = new Date().toISOString().slice(0, 10);
     download(`fichas-ogoa-${stamp}.json`, {
       app: 'ogoa-fichas', version: 1,
@@ -714,23 +694,98 @@ async function init() {
   window.addEventListener('beforeunload', e => { if (dirty) { save(); e.preventDefault(); } });
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
 
-  try { await navigator.storage?.persist?.(); } catch { /* opcional */ }
-
-  const recs = await refreshList();
-  let last = null;
-  try { last = +localStorage.getItem('ogoa-last'); } catch { /* nada */ }
-  if (!recs.length) {
-    // Primera vez en este navegador: cargar el personaje de ejemplo
-    try {
-      const r = await fetch('ejemplos/jasper-stonehill.json');
-      if (!r.ok) throw new Error(r.status);
-      await importFiles([new File([await r.blob()], 'jasper-stonehill.json')]);
-    } catch { /* sin ejemplo (p. ej. abierto como archivo local) */ }
-    if (state.id == null) await createNew();
-  } else await open(recs.some(r => r.id === last) ? last : recs[0].id);
-
   // re-ajustar cuando terminen de cargar las fuentes web
-  document.fonts?.ready.then(fill);
+  document.fonts?.ready.then(() => { if (state.id != null) fill(); });
+
+  $('#btn-login').addEventListener('click', async () => {
+    try { await Auth.signIn(); }
+    catch (e) {
+      if (e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request') {
+        showLogin('No se pudo iniciar sesión: ' + (e.code || e.message));
+      }
+    }
+  });
+  for (const id of ['#btn-logout', '#btn-switch']) {
+    $(id).addEventListener('click', async () => { await save(); await Auth.signOut(); location.reload(); });
+  }
+  $('#btn-migrate').addEventListener('click', migrateLocal);
+
+  Auth.onChange(startSession);
 }
 
-init().catch(e => status('Error: ' + e.message, true));
+/* ---- sesión ---- */
+function showLogin(msg = '', mode = 'login') {
+  $('#login').hidden = false;
+  $('#login-msg').textContent = msg;
+  $('#login-msg').hidden = !msg;
+  $('#btn-login').hidden = mode !== 'login';
+  $('#btn-switch').hidden = mode !== 'denied';
+  $('#login-busy').hidden = mode !== 'busy';
+}
+
+let sessionStarted = false;
+async function startSession(user) {
+  if (!user) { showLogin(); return; }
+  if (sessionStarted) return;
+  showLogin('Conectando como ' + user.email + '…', 'busy');
+  let recs;
+  try {
+    recs = await refreshList();
+  } catch (e) {
+    if (e.code === 'permission-denied') {
+      showLogin(`La cuenta ${user.email} no tiene acceso a estas fichas. Pide al administrador que la autorice, o entra con otra cuenta.`, 'denied');
+    } else {
+      showLogin('No se pudo conectar con la base de datos: ' + (e.code || e.message), 'denied');
+    }
+    return;
+  }
+  sessionStarted = true;
+  $('#login').hidden = true;
+  $('#user-email').textContent = user.email;
+
+  let last = null;
+  try { last = localStorage.getItem('ogoa-last'); } catch { /* nada */ }
+  if (!recs.length) await createNew();
+  else await open(recs.some(r => r.id === last) ? last : recs[0].id);
+  checkLocal();
+}
+
+/* ---- fichas guardadas en el navegador antes de usar la nube ---- */
+const MIGRATED = 'ogoa-migrated';
+async function checkLocal() {
+  let done = false;
+  try { done = localStorage.getItem(MIGRATED) === '1'; } catch { /* nada */ }
+  const local = done ? [] : await LocalStore.all();
+  const btn = $('#btn-migrate');
+  btn.hidden = !local.length;
+  btn.textContent = `Subir a la nube ${local.length} ficha${local.length > 1 ? 's' : ''} de este navegador`;
+  return local;
+}
+async function migrateLocal() {
+  const local = await checkLocal();
+  if (!local.length) return;
+  const names = local.map(r => '• ' + (r.data?.name || 'Sin nombre')).join('\n');
+  if (!confirm(`Se subirán a la nube estas fichas guardadas en este navegador:\n\n${names}\n\n¿Continuar?`)) return;
+  const btn = $('#btn-migrate');
+  btn.disabled = true;
+  let n = 0, firstId = null;
+  try {
+    for (const r of local) {
+      status(`Subiendo ${n + 1} de ${local.length}…`);
+      const rec = await Store.create(normalize(r.data), await shrinkPortrait(r.portrait));
+      firstId ??= rec.id;
+      n++;
+    }
+    try { localStorage.setItem(MIGRATED, '1'); } catch { /* nada */ }
+    btn.hidden = true;
+    await refreshList();
+    await open(firstId);
+    status(`Subidas ${n} ficha${n > 1 ? 's' : ''} a la nube`);
+  } catch (e) {
+    status(`Error al subir (${n} subidas): ${e.code || e.message}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+init().catch(e => showLogin('Error al iniciar la aplicación: ' + e.message, 'denied'));

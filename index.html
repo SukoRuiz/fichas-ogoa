@@ -14,12 +14,14 @@
   <header>
     <div class="kicker">Old Gods of Appalachia</div>
     <h1>Fichas de personaje</h1>
+    <div class="user"><span id="user-email"></span> <button id="btn-logout" type="button">Salir</button></div>
   </header>
   <button id="btn-new" class="primary">+ Nueva ficha</button>
   <label class="player-field">Jugador de la ficha abierta <small>(no se imprime)</small>
     <input id="player" type="text" placeholder="Nombre del jugador" autocomplete="off">
   </label>
   <ul id="list"></ul>
+  <button id="btn-migrate" type="button" hidden></button>
   <div class="actions">
     <div class="status" id="status">—</div>
     <label class="print-sel">Imprimir
@@ -39,7 +41,7 @@
       <button id="btn-export-all" title="Descarga todas las fichas en un solo .json (copia de seguridad)">Exportar todas</button>
     </div>
     <button id="btn-import" title="Carga fichas desde un .json exportado">Importar .json</button>
-    <p class="note">Las fichas se guardan en este navegador. Para usarlas en otro PC, exporta y luego importa allí.</p>
+    <p class="note">Las fichas se guardan en la nube y se ven desde cualquier PC al entrar con una cuenta autorizada. <em>Exportar todas</em> descarga una copia de seguridad.</p>
     <input type="file" id="import-file" accept="application/json,.json" multiple hidden>
     <details class="help">
       <summary>Formato de los textos largos</summary>
@@ -61,7 +63,19 @@
   <div class="sheet" id="back"><img class="bg" src="img/reverso.jpg" alt=""></div>
 </main>
 
+<div id="login" class="login">
+  <div class="login-card">
+    <div class="kicker">Old Gods of Appalachia</div>
+    <h1>Fichas de personaje</h1>
+    <p id="login-msg" hidden></p>
+    <div id="login-busy" class="busy"></div>
+    <button id="btn-login" type="button" class="primary" hidden>Entrar con Google</button>
+    <button id="btn-switch" type="button" hidden>Entrar con otra cuenta</button>
+    <p class="small">Solo las cuentas autorizadas pueden ver y editar las fichas.</p>
+  </div>
+</div>
+
 <input type="file" id="portrait-file" accept="image/*" hidden>
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -19,11 +19,40 @@ No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) 
 
 ## Dónde se guardan las fichas
 
-Las fichas se guardan **en el navegador** que las crea (IndexedDB), no en GitHub.
+En **Firebase (Firestore)**, proyecto `fichas-ogoa` de la cuenta de Google `felix.ruvi@gmail.com`:
 
-- Para pasar fichas a otro ordenador o navegador: **Exportar todas** (descarga un `.json`) y luego **Importar .json** en el otro.
-- Haz de vez en cuando *Exportar todas* como copia de seguridad: si se borran los datos del navegador, se pierden las fichas.
-- La primera vez que se abre la web en un navegador se carga el ejemplo `ejemplos/jasper-stonehill.json`.
+- `characters/{id}`: datos de cada ficha (+ fecha y correo de la última edición).
+- `portraits/{id}`: el retrato de cada ficha, comprimido a JPEG.
+
+Para entrar hay que **iniciar sesión con Google**, y solo pueden leer o escribir los correos autorizados en las reglas de Firestore. El código de la web es público, pero los datos no.
+
+- **Dar o quitar acceso:** consola de Firebase → Firestore Database → Reglas → edita la lista de correos → **Publicar**.
+- **Copia de seguridad:** botón *Exportar todas*, que descarga un `.json` con todas las fichas y retratos. *Importar .json* las vuelve a subir.
+- **Fichas antiguas:** si un navegador tenía fichas de la versión anterior (guardadas en el navegador), aparece el botón *Subir a la nube N fichas de este navegador*.
+- El personaje de ejemplo (Jasper Stonehill) ya no está en el repositorio. Si hace falta, se importa con *Importar .json*.
+
+### Reglas de Firestore
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function autorizado() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in [
+          'felix.ruvi@gmail.com',
+          'correo.del.master@gmail.com'
+        ];
+    }
+    match /{document=**} {
+      allow read, write: if autorizado();
+    }
+  }
+}
+```
+
+En *Authentication → Configuración → Dominios autorizados* debe estar `sukoruiz.github.io` (y `localhost` para probar en local).
 
 ## Publicar en GitHub Pages
 
@@ -40,7 +69,7 @@ Después, cada `git push` a `main` actualiza la web automáticamente en uno o do
 
 ## Probar en local
 
-Con Python instalado, desde esta carpeta:
+Con Python instalado, desde esta carpeta (hace falta servirlo por http, no abrir el archivo directamente):
 
 ```bash
 python -m http.server 8000
@@ -53,10 +82,11 @@ y abre <http://localhost:8000>.
 ```
 index.html                 página
 style.css                  estilos (pantalla e impresión)
-app.js                     lógica: campos, Markdown, guardado, importar/exportar
+app.js                     lógica: campos, Markdown, sesión, importar/exportar
+store.js                   acceso a Firebase (login con Google y Firestore)
+firebase-config.js         configuración pública del proyecto Firebase
 img/anverso.jpg            plantilla oficial (anverso)
 img/reverso.jpg            plantilla oficial (reverso)
-ejemplos/jasper-stonehill.json   personaje de ejemplo
 ```
 
 Las plantillas de la ficha son © 2021 DeepNerd Media (Cypher System © Monte Cook Games); la propia hoja permite copiarla para uso personal.
