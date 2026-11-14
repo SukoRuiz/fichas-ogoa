@@ -19,14 +19,14 @@ No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) 
 
 ## Dónde se guardan las fichas
 
-En **Firebase (Firestore)**, proyecto `fichas-ogoa` de la cuenta de Google `felix.ruvi@gmail.com`:
+En **Firebase (Firestore)**, proyecto `fichas-ogoa`:
 
 - `characters/{id}`: datos de cada ficha (+ fecha y correo de la última edición).
 - `portraits/{id}`: el retrato de cada ficha, comprimido a JPEG.
 
 Para entrar hay que **iniciar sesión con Google**, y solo pueden leer o escribir los correos autorizados en las reglas de Firestore. El código de la web es público, pero los datos no.
 
-- **Dar o quitar acceso:** consola de Firebase → Firestore Database → Reglas → edita la lista de correos → **Publicar**.
+- **Dar o quitar acceso:** consola de Firebase → Firestore Database → Reglas → edita la lista de correos (cuentas de Google, en minúsculas) → **Publicar**. No hace falta tocar el código.
 - **Copia de seguridad:** botón *Exportar todas*, que descarga un `.json` con todas las fichas y retratos. *Importar .json* las vuelve a subir.
 - **Fichas antiguas:** si un navegador tenía fichas de la versión anterior (guardadas en el navegador), aparece el botón *Subir a la nube N fichas de este navegador*.
 - El personaje de ejemplo (Jasper Stonehill) ya no está en el repositorio. Si hace falta, se importa con *Importar .json*.
@@ -41,7 +41,7 @@ service cloud.firestore {
       return request.auth != null
         && request.auth.token.email_verified == true
         && request.auth.token.email.lower() in [
-          'felix.ruvi@gmail.com',
+          'correo.del.administrador@gmail.com',
           'correo.del.master@gmail.com'
         ];
     }
