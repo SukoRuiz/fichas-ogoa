@@ -8,13 +8,16 @@ No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) 
 
 ## Uso
 
-- **+ Nueva ficha** crea una ficha en blanco. Todo se guarda solo mientras escribes.
+- El botón **+** (junto al campo de jugador) crea una ficha en blanco. Todo se guarda solo mientras escribes.
 - Los campos se rellenan directamente sobre la plantilla.
 - Las cajas grandes (habilidades especiales, cifras, equipo, trasfondo, arcos, notas) admiten **Markdown**: haz clic para editar y clic fuera o `Esc` para terminar.
   `**negrita**`, `*cursiva*`, `- lista`, `1. lista`, `### título`, `---`, `> cita`. Si el texto no cabe, la letra se reduce sola.
-- **Retrato**: haz clic en la zona del retrato o arrastra una imagen. Con "Rellenar" puedes arrastrar la imagen para encuadrarla.
+  El icono **?** de la barra inferior abre una ayuda con ejemplos y cómo se ven.
+- **Might / Speed / Intellect**: a la izquierda el total (reserva actual); a la derecha, el valor inicial y sus incrementos, uno por línea (`10`, `+4`, `+7`); debajo, la ventaja (*Edge*). Si el total está vacío, se sugiere la suma de la lista (no se imprime).
+- **Retrato**: haz clic en la zona del retrato o arrastra una imagen. Con "Rellenar" puedes arrastrar la imagen para encuadrarla; en ese modo los bordes se difuminan sobre el papel.
 - **Jugador**: se escribe en la barra lateral. Sale en la lista de fichas pero **no se imprime**.
-- **Imprimir**: elige ambas caras, solo anverso o solo reverso. Formato apaisado (A4 o Carta).
+- **Barra de iconos** (abajo a la izquierda): imprimir, duplicar, borrar, exportar ficha, exportar todas, importar `.json` y ayuda.
+- **Imprimir**: el icono de impresora abre un menú: ambas caras, solo anverso o solo reverso. Formato apaisado (A4 o Carta).
   Para imprimir a doble cara, activa "dos caras / voltear por el lado corto" en el diálogo de impresión.
 
 ## Dónde se guardan las fichas
@@ -27,7 +30,7 @@ En **Firebase (Firestore)**, proyecto `fichas-ogoa`:
 Para entrar hay que **iniciar sesión con Google**, y solo pueden leer o escribir los correos autorizados en las reglas de Firestore. El código de la web es público, pero los datos no.
 
 - **Dar o quitar acceso:** consola de Firebase → Firestore Database → Reglas → edita la lista de correos (cuentas de Google, en minúsculas) → **Publicar**. No hace falta tocar el código.
-- **Copia de seguridad:** botón *Exportar todas*, que descarga un `.json` con todas las fichas y retratos. *Importar .json* las vuelve a subir.
+- **Copia de seguridad:** icono *Exportar todas*, que descarga un `.json` con todas las fichas y retratos. *Importar* las vuelve a subir.
 - **Fichas antiguas:** si un navegador tenía fichas de la versión anterior (guardadas en el navegador), aparece el botón *Subir a la nube N fichas de este navegador*.
 - El personaje de ejemplo (Jasper Stonehill) ya no está en el repositorio. Si hace falta, se importa con *Importar .json*.
 
@@ -85,8 +88,11 @@ style.css                  estilos (pantalla e impresión)
 app.js                     lógica: campos, Markdown, sesión, importar/exportar
 store.js                   acceso a Firebase (login con Google y Firestore)
 firebase-config.js         configuración pública del proyecto Firebase
+manifest.webmanifest       nombre e iconos de la web (para instalarla como app)
 img/anverso.jpg            plantilla oficial (anverso)
 img/reverso.jpg            plantilla oficial (reverso)
+img/icon.svg               icono de la web (luna sobre los Apalaches)
+img/icon-*.png, img/apple-touch-icon.png   el mismo icono en PNG
 ```
 
 Las plantillas de la ficha son © 2021 DeepNerd Media (Cypher System © Monte Cook Games); la propia hoja permite copiarla para uso personal.

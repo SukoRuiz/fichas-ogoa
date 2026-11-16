@@ -91,13 +91,15 @@ const FRONT = [
 ];
 
 // Reservas: [clave, x reserva, ancho reserva, x ventaja, ancho ventaja]
+// Columna izquierda: total (reserva actual). Columna derecha: lista con el valor
+// inicial y sus incrementos (uno por línea) y, abajo, la ventaja (Edge).
 for (const [k, px, pw, ex, ew] of [
   ['might', 36, 56, 96, 52], ['speed', 152, 54, 208, 52], ['intellect', 264, 54, 320, 56],
 ]) {
   FRONT.push(
-    F('text', `${k}.pool`, px, 304, pw, 40, { fs: 30, cls: 'center', ph: '–', title: 'Reserva actual' }),
-    F('text', `${k}.max`, px, 346, pw, 20, { fs: 14, cls: 'center', ph: 'máx', title: 'Reserva máxima' }),
-    F('text', `${k}.edge`, ex, 310, ew, 40, { fs: 30, cls: 'center', ph: '–', title: 'Ventaja' }),
+    F('text', `${k}.pool`, px, 302, pw, 88, { fs: 36, cls: 'center', ph: '–', title: 'Reserva actual' }),
+    F('steps', `${k}.max`, ex, 300, ew, 66, { ph: 'inicial\n+…' }),
+    F('text', `${k}.edge`, ex, 368, ew, 22, { fs: 17, cls: 'center', ph: '–', title: 'Ventaja (Edge)' }),
   );
 }
 
@@ -190,6 +192,17 @@ function renderMD(src) {
   return html;
 }
 
+/** Ejemplos de la ventana de ayuda (a la izquierda el texto, a la derecha cómo se ve). */
+const MD_EXAMPLES = [
+  '**negrita**, *cursiva* y ~~tachado~~',
+  '- un elemento\n- otro elemento\n  - sublista (dos espacios delante)',
+  '1. primer paso\n2. segundo paso',
+  '### Encabezado\nTexto debajo del encabezado.',
+  '> Una cita o frase del personaje.',
+  'Párrafo de arriba.\n\n---\n\nPárrafo tras una línea separadora.',
+  '### Golpe salvaje (2 Might)\nAtaque cuerpo a cuerpo que inflige **+3 daño**.\n- *Acción*\n- Solo con armas pesadas',
+];
+
 /* =====================================================================
  * Construcción de la interfaz
  * ===================================================================== */
@@ -227,6 +240,13 @@ function build(sheet, specs) {
         el.classList.toggle('on', v);
         changed(s.f);
       });
+    } else if (s.k === 'steps') {
+      el = document.createElement('textarea');
+      el.className = 'steps';
+      el.wrap = 'off';
+      el.spellcheck = false;
+      el.placeholder = s.ph || '';
+      el.addEventListener('input', () => { setPath(state.data, s.f, el.value); fitSteps(el, s); changed(s.f); });
     } else if (s.k === 'md') {
       el = document.createElement('div');
       el.className = 'md';
@@ -250,6 +270,20 @@ function fitInput(el) {
   const w = measureCtx.measureText(el.value || '').width;
   const fs = w > avail && w > 0 ? Math.max(8, base * avail / w) : base;
   el.style.fontSize = fs + 'px';
+}
+/** Lista de valores de una reserva: reduce la letra si no cabe y muestra la suma como pista. */
+function fitSteps(el, s) {
+  let fs = 13;
+  el.style.fontSize = fs + 'px';
+  while ((el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) && fs > 7) {
+    fs -= 0.5;
+    el.style.fontSize = fs + 'px';
+  }
+  const nums = (el.value.match(/[-+]?\d+/g) || []).map(Number);
+  const sum = nums.reduce((a, b) => a + b, 0);
+  el.title = 'Valor inicial y sus incrementos, uno por línea' + (nums.length ? `\nReserva máxima: ${sum}` : '');
+  const pool = fields.find(f => f.spec.f === s.f.replace(/\.max$/, '.pool'));
+  if (pool) pool.el.placeholder = nums.length ? String(sum) : '–';
 }
 function fitMD(el) {
   let fs = 13;
@@ -493,6 +527,7 @@ async function loadPortrait(file) {
 function fill() {
   for (const { spec: s, el } of fields) {
     if (s.k === 'text') { el.value = getPath(state.data, s.f) ?? ''; fitInput(el); }
+    else if (s.k === 'steps') { el.value = getPath(state.data, s.f) ?? ''; fitSteps(el, s); }
     else if (s.k === 'cb' || s.k === 'dot') el.classList.toggle('on', !!getPath(state.data, s.f));
     else if (s.k === 'md') renderBox(el, s);
     else if (s.k === 'portrait') showPortrait();
@@ -684,11 +719,39 @@ async function init() {
     e.target.value = '';
   });
 
-  $('#print-what').addEventListener('change', e => { document.body.dataset.print = e.target.value; });
-  $('#btn-print').addEventListener('click', async () => {
+  // imprimir: menú con ambas caras / solo anverso / solo reverso
+  const printBtn = $('#btn-print'), printMenu = $('#print-menu');
+  const toggleMenu = show => {
+    printMenu.hidden = !show;
+    printBtn.setAttribute('aria-expanded', String(show));
+  };
+  printBtn.addEventListener('click', () => toggleMenu(printMenu.hidden));
+  document.addEventListener('click', e => { if (!e.target.closest('.menu-wrap')) toggleMenu(false); });
+  printMenu.addEventListener('click', async e => {
+    const what = e.target.dataset.print;
+    if (!what) return;
+    toggleMenu(false);
+    document.body.dataset.print = what;
     if (editor) closeEditor();
     await save();
     window.print();
+  });
+
+  // ayuda de Markdown
+  const help = $('#help');
+  const grid = $('#help-grid');
+  for (const ex of MD_EXAMPLES) {
+    const pre = document.createElement('pre');
+    pre.textContent = ex;
+    const out = document.createElement('div');
+    out.className = 'md';
+    out.innerHTML = renderMD(ex);
+    grid.append(pre, out);
+  }
+  $('#btn-help').addEventListener('click', () => { help.hidden = false; $('.close', help).focus(); });
+  help.addEventListener('click', e => { if (e.target === help || e.target.closest('[data-close]')) help.hidden = true; });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; toggleMenu(false); }
   });
   window.addEventListener('beforeprint', () => { if (editor) closeEditor(); });
   window.addEventListener('beforeunload', e => { if (dirty) { save(); e.preventDefault(); } });
