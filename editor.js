@@ -1,12 +1,16 @@
 /* Editor de layouts de ficha (pestaña Layouts).
  *
- * Permite crear layouts nuevos subiendo la imagen de cada página y dibujando encima
- * las zonas de datos, y retocar los incluidos (se guarda una versión "modificada" que
- * se puede restaurar). Todo se guarda en Firestore: layouts/{id} y layoutImages/{id}__{página}.
+ * Dos modos:
+ *  - Ver: la página se dibuja con los datos de una ficha (sin poder modificar nada).
+ *  - Editar: se suben las imágenes de las páginas y se dibujan encima las zonas de datos.
+ * Siempre se abre en modo Ver; solo se edita tras pulsar «Editar».
+ * Lo que se cambia se guarda solo en Firestore: layouts/{id} y layoutImages/{id}__{página}.
+ * Un layout incluido que se edita se guarda como versión modificada del mismo id.
  */
 import { LayoutDocs, LayoutImages } from './store.js';
 import { LAYOUTS, getLayout, setStored, toDoc, orientationOf } from './layouts/index.js';
 import { CATALOG, TABLES, KIND_LABEL, catalogItem, tableCols } from './layouts/fields.js';
+import { renderReadOnly } from './sheet.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -16,14 +20,14 @@ const r2 = v => Math.round(v * 2) / 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const imgKey = (lid, pid) => `${lid}__${pid}`;
 
-let ctx = null;       // { status, preview(id), download(name, obj), campaignsUsing(id) }
+let ctx = null;       // { status, download, campaignsUsing(id), characters(), currentCharacter(), loadCharacter(id) }
 let stored = [];      // documentos guardados en Firestore ({ id, name, pages })
 const imgCache = new Map();
-const ui = { id: null, page: 0, sel: -1, zoom: 'fit', pending: null };
+const ui = { id: null, page: 0, sel: -1, zoom: 'fit', pending: null, mode: 'view', charId: null, char: null };
 
 const cur = () => getLayout(ui.id);
 const curPage = () => cur()?.pages[ui.page] || null;
-const isEditable = l => !!l && (l.custom || l.modified);
+const isEditable = l => !!l && ui.mode === 'edit';
 
 /* =====================================================================
  * Carga y guardado
@@ -57,11 +61,17 @@ async function persist(id) {
   clearTimeout(timers.get(id));
   timers.delete(id);
   const l = getLayout(id);
-  if (!l || !isEditable(l)) return;
+  if (!l) return;
   const d = clean(toDoc(l));
   try {
     await LayoutDocs.set(id, d);
     upsertStored({ id, ...d });
+    if (l.builtin && !l.modified) {
+      l.modified = true;
+      renderList();
+      const badge = $('.ly .badge');
+      if (badge && cur() === l) badge.textContent = 'Incluido · modificado';
+    }
     ctx.status('Layout guardado ' + new Date().toLocaleTimeString());
   } catch (e) {
     ctx.status('Error al guardar el layout: ' + (e.code || e.message), true);
@@ -129,7 +139,7 @@ export function init(context) {
 }
 const visible = () => !$('#panel-layouts').hidden;
 
-export function select(id) { ui.id = id; ui.page = 0; ui.sel = -1; }
+export function select(id, mode = 'view') { ui.id = id; ui.page = 0; ui.sel = -1; ui.mode = mode; }
 
 function describe(l) {
   const kind = l.custom ? 'Subido' : l.modified ? 'Incluido · modificado' : 'Incluido';
@@ -161,21 +171,24 @@ export async function render() {
   const pg = curPage(), ed = isEditable(l);
   const root = $('#panel-layouts');
   const kind = l.custom ? 'Subido' : l.modified ? 'Incluido · modificado' : 'Incluido';
+  const chars = [...ctx.characters()].sort((a, b) => (a.data.name || '').localeCompare(b.data.name || '', 'es', { sensitivity: 'base' }));
+  if (!chars.some(c => c.id === ui.charId)) ui.charId = chars.some(c => c.id === ctx.currentCharacter()) ? ctx.currentCharacter() : chars[0]?.id || null;
   root.innerHTML = `
-  <div class="panel-card ly">
+  <div class="panel-card ly ${ed ? 'mode-edit' : 'mode-view'}">
     <div class="panel-head">
       <input class="title-input" id="ly-name" autocomplete="off" placeholder="Nombre del layout"${ed ? '' : ' disabled'}>
       <span class="badge">${kind}</span>
     </div>
-    ${ed ? '' : '<p class="hint">Este layout viene incluido en la web. Para cambiar sus zonas pulsa «Modificar»: se guarda una versión modificada que siempre puedes restaurar al original.</p>'}
     <div class="ly-actions">
-      ${ed ? '' : '<button type="button" class="btn primary" data-a="edit">Modificar</button>'}
-      <button type="button" class="btn" data-a="preview" title="Abre la ficha que tenías abierta con este layout">Ver en la ficha</button>
+      <div class="seg" role="group" aria-label="Modo">
+        <button type="button" data-mode="view" aria-pressed="${!ed}" title="Ver el layout con los datos de una ficha">Ver</button>
+        <button type="button" data-mode="edit" aria-pressed="${ed}" title="Cambiar páginas y zonas">Editar</button>
+      </div>
+      ${ed ? '' : `<label class="ly-char">Ficha <select id="ly-char">${chars.map(c => `<option value="${esc(c.id)}"${c.id === ui.charId ? ' selected' : ''}>${esc(c.data.name || 'Sin nombre')}${c.data.player ? ` · ${esc(c.data.player)}` : ''}</option>`).join('') || '<option value="">No hay fichas</option>'}</select></label>`}
+      <span class="grow"></span>
       <button type="button" class="btn" data-a="dup">Duplicar</button>
       <button type="button" class="btn" data-a="export" title="Descarga el layout con sus imágenes (.json)">Exportar</button>
-      <span class="grow"></span>
-      ${l.modified ? '<button type="button" class="btn danger" data-a="restore">Restaurar original</button>' : ''}
-      ${l.custom ? '<button type="button" class="btn danger" data-a="delete">Borrar layout</button>' : ''}
+      ${ed && l.custom ? '<button type="button" class="btn danger" data-a="delete">Borrar layout</button>' : ''}
     </div>
     <div class="ly-pages">
       ${l.pages.map((p, i) => `<button type="button" class="ly-tab${i === ui.page ? ' on' : ''}" data-page="${i}">${esc(p.name || `Página ${i + 1}`)}</button>`).join('')}
@@ -183,36 +196,44 @@ export async function render() {
     </div>
     ${pg ? `
     <div class="ly-pagebar">
-      <input id="ly-pname" autocomplete="off" placeholder="Nombre de la página"${ed ? '' : ' disabled'}>
+      ${ed ? '<input id="ly-pname" autocomplete="off" placeholder="Nombre de la página">' : ''}
       <span class="muted">${pg.width} × ${pg.height} px · ${orientationOf(pg) === 'portrait' ? 'vertical' : 'horizontal'}</span>
       <span class="grow"></span>
       ${ed ? `<button type="button" class="btn" data-a="left" title="Mover antes"${ui.page === 0 ? ' disabled' : ''}>←</button>
         <button type="button" class="btn" data-a="right" title="Mover después"${ui.page === l.pages.length - 1 ? ' disabled' : ''}>→</button>
         <button type="button" class="btn" data-a="image" title="Sustituye la imagen; las zonas se reescalan si cambia el tamaño">Cambiar imagen</button>
         <button type="button" class="btn danger" data-a="delpage">Quitar página</button>` : ''}
-      <select id="ly-zoom" title="Zoom">${[['fit', 'Ajustar'], ['1', '100 %'], ['1.5', '150 %'], ['2', '200 %']].map(([v, t]) => `<option value="${v}"${String(ui.zoom) === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
+      <select id="ly-zoom" title="Zoom">${[['fit', 'Página entera'], ['width', 'Ancho'], ['1', '100 %'], ['1.5', '150 %'], ['2', '200 %']].map(([v, t]) => `<option value="${v}"${String(ui.zoom) === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
     </div>
     <div class="ly-work">
       <div class="ly-canvas-wrap"><div class="ly-canvas" tabindex="0"></div></div>
-      <div class="ly-props"></div>
-    </div>` : `<p class="hint">Este layout aún no tiene páginas. Pulsa «+ Página» y elige la imagen de la plantilla (PNG o JPG); después dibuja encima las zonas de datos.</p>`}
+      ${ed ? '<div class="ly-props"></div>' : ''}
+    </div>` : `<p class="hint">Este layout aún no tiene páginas.${ed ? ' Pulsa «+ Página» y elige la imagen de la plantilla (PNG o JPG); después dibuja encima las zonas de datos.' : ' Pulsa «Editar» para añadirlas.'}</p>`}
   </div>`;
 
   $('#ly-name', root).value = l.name;
   $('#ly-name', root).addEventListener('input', e => { l.name = e.target.value; changed(l); renderList(); });
+  for (const b of $$('[data-mode]', root)) b.addEventListener('click', async () => {
+    if (ui.mode === b.dataset.mode) return;
+    await flush();
+    ui.mode = b.dataset.mode;
+    ui.sel = -1;
+    render();
+  });
+  $('#ly-char', root)?.addEventListener('change', e => { ui.charId = e.target.value; ui.char = null; renderCanvas(); });
   for (const b of $$('[data-page]', root)) b.addEventListener('click', () => { ui.page = +b.dataset.page; ui.sel = -1; render(); });
   for (const b of $$('[data-a]', root)) b.addEventListener('click', () => action(b.dataset.a));
   if (pg) {
-    $('#ly-pname', root).value = pg.name || '';
-    $('#ly-pname', root).addEventListener('input', e => {
+    $('#ly-pname', root)?.addEventListener('input', e => {
       pg.name = e.target.value;
       changed(l);
       $(`[data-page="${ui.page}"]`, root).textContent = pg.name || `Página ${ui.page + 1}`;
     });
+    if ($('#ly-pname', root)) $('#ly-pname', root).value = pg.name || '';
     $('#ly-zoom', root).addEventListener('change', e => { ui.zoom = e.target.value; renderCanvas(); });
     await ensureImages(l);
     if (cur() !== l) return;
-    renderCanvas();
+    await renderCanvas();
     renderProps();
   }
 }
@@ -221,15 +242,6 @@ export async function render() {
 async function action(a) {
   const l = cur(), pg = curPage();
   try {
-    if (a === 'edit') {
-      const d = clean(toDoc(l));
-      await LayoutDocs.set(l.id, d);
-      upsertStored({ id: l.id, ...d });
-      setStored(stored);
-      ctx.status('Ahora puedes modificar este layout');
-      return render();
-    }
-    if (a === 'preview') { await flush(); return ctx.preview(l.id); }
     if (a === 'dup') {
       await ensureImages(l);
       const nid = LayoutDocs.newId();
@@ -239,7 +251,7 @@ async function action(a) {
       await LayoutDocs.set(nid, d);
       upsertStored({ id: nid, ...d });
       setStored(stored);
-      select(nid);
+      select(nid, 'edit');
       ctx.status('Layout duplicado');
       return render();
     }
@@ -253,12 +265,6 @@ async function action(a) {
       ctx.download(`layout-${(l.name || 'ficha').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_')}.json`,
         { app: 'ogoa-layout', version: 1, layout: { name: l.name, pages } });
       return ctx.status('Layout exportado');
-    }
-    if (a === 'restore') {
-      if (!confirm(`¿Restaurar "${l.name}" a su versión original? Se pierden los cambios hechos aquí.`)) return;
-      await removeStored(l);
-      ctx.status('Layout restaurado');
-      return render();
     }
     if (a === 'delete') {
       const uses = ctx.campaignsUsing(l.id);
@@ -305,7 +311,7 @@ async function newLayout() {
   await LayoutDocs.set(nid, d);
   upsertStored({ id: nid, ...d });
   setStored(stored);
-  select(nid);
+  select(nid, 'edit');
   await render();
   $('#ly-name')?.select();
 }
@@ -391,9 +397,11 @@ export async function restore(list) {
  * Lienzo: zonas sobre la imagen
  * ===================================================================== */
 function scale(pg) {
-  if (ui.zoom !== 'fit') return +ui.zoom;
-  const w = $('.ly-canvas-wrap')?.clientWidth || 700;
-  return Math.min(1, (w - 2) / pg.width);
+  const wrap = $('.ly-canvas-wrap');
+  const w = (wrap?.clientWidth || 700) - 2, h = (wrap?.clientHeight || 700) - 2;
+  if (ui.zoom === 'width') return w / pg.width;
+  if (ui.zoom === 'fit') return Math.min(w / pg.width, h / pg.height);
+  return +ui.zoom;
 }
 
 function zoneHTML(z, i, ed) {
@@ -416,17 +424,23 @@ function zoneHTML(z, i, ed) {
   return `<div class="ly-zone k-${esc(z.k)}${z.f ? '' : ' nofield'}${i === ui.sel ? ' sel' : ''}" data-i="${i}" style="left:${z.x}px;top:${z.y}px;width:${z.w}px;height:${z.h}px" title="${esc(label)}">${extra}<span class="ly-label">${esc(label)}</span>${ed ? '<span class="ly-rs" data-rs title="Arrastra para cambiar el tamaño"></span>' : ''}</div>`;
 }
 
-function renderCanvas() {
+async function renderCanvas() {
   const l = cur(), pg = curPage(), cv = $('.ly-canvas');
   if (!cv || !pg) return;
   const s = scale(pg), ed = isEditable(l);
   cv.style.width = pg.width * s + 'px';
   cv.style.height = pg.height * s + 'px';
-  cv.classList.toggle('readonly', !ed);
-  cv.innerHTML = `<div class="ly-inner" style="width:${pg.width}px;height:${pg.height}px;transform:scale(${s});--s:${s}">${pg.fields.map((z, i) => zoneHTML(z, i, ed)).join('')}</div>`;
+  cv.innerHTML = `<div class="ly-inner${ed ? '' : ' ro'}" style="width:${pg.width}px;height:${pg.height}px;transform:scale(${s});--s:${s}">${ed ? pg.fields.map((z, i) => zoneHTML(z, i, ed)).join('') : ''}</div>`;
   const inner = $('.ly-inner', cv);
   if (pg.background) inner.style.backgroundImage = `url("${pg.background}")`;
-  inner.addEventListener('pointerdown', onPointerDown);
+  if (ed) { inner.addEventListener('pointerdown', onPointerDown); return; }
+  // modo Ver: la página con los datos de la ficha elegida, sin poder tocar nada
+  if (!ui.charId) return;
+  if (!ui.char || ui.char.id !== ui.charId) {
+    try { ui.char = await ctx.loadCharacter(ui.charId); } catch (e) { ctx.status('No se pudo abrir la ficha: ' + (e.code || e.message), true); return; }
+  }
+  if (!inner.isConnected || !ui.char) return;
+  renderReadOnly(inner, pg, ui.char.data || {}, ui.char.portrait || null);
 }
 
 function posZone(i) {
@@ -447,6 +461,7 @@ function selectZone(i) {
 
 function onPointerDown(e) {
   const l = cur(), pg = curPage(), ed = isEditable(l);
+  if (!ed) return; // en modo Ver no se modifica nada
   const inner = e.currentTarget, s = scale(pg);
   const rect = inner.getBoundingClientRect();
   const P = ev => ({ x: (ev.clientX - rect.left) / s, y: (ev.clientY - rect.top) / s });

@@ -5,9 +5,10 @@
  */
 import { Cloud as Store, LocalStore, Auth } from './store.js';
 import * as Mesa from './mesa.js';
-import { LAYOUTS, DEFAULT_LAYOUT, getLayout, orientationOf } from './layouts/index.js';
+import { DEFAULT_LAYOUT, getLayout, orientationOf } from './layouts/index.js';
 import { expandFields } from './layouts/fields.js';
 import * as Editor from './editor.js';
+import { renderMD, fitInput, fitBox, getPath, place, applyPortraitFit } from './sheet.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -52,72 +53,11 @@ function normalize(data) {
   return merge(blank(), data || {});
 }
 
-const getPath = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
 function setPath(o, p, v) {
   const ks = p.split('.');
   const last = ks.pop();
   // un layout puede usar rutas que la ficha aún no tiene (p. ej. más filas de habilidades)
   ks.reduce((a, k, i) => (a[k] ??= /^\d+$/.test(ks[i + 1] ?? last) ? [] : {}), o)[last] = v;
-}
-
-/* =====================================================================
- * Markdown mínimo (negrita, cursiva, listas anidadas, títulos, citas, hr)
- * ===================================================================== */
-function esc(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-function inline(s) {
-  return esc(s)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*(?!\s)(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/__(?!\s)(.+?)__/g, '<strong>$1</strong>')
-    .replace(/\*(?!\s)([^*]+?)\*/g, '<em>$1</em>')
-    .replace(/(^|[\s(¡¿"«])_(?!\s)([^_]+?)_(?=$|[\s.,;:!?)"»])/g, '$1<em>$2</em>')
-    .replace(/~~(.+?)~~/g, '<del>$1</del>');
-}
-function renderMD(src) {
-  const lines = (src || '').replace(/\r/g, '').split('\n');
-  let html = '', para = [];
-  const stack = []; // listas abiertas: {type, indent}
-  const flush = () => { if (para.length) { html += '<p>' + para.map(inline).join('<br>') + '</p>'; para = []; } };
-  const closeTo = indent => {
-    while (stack.length && stack[stack.length - 1].indent > indent) html += `</li></${stack.pop().type}>`;
-  };
-  for (const raw of lines) {
-    const line = raw.replace(/\t/g, '  ');
-    let m;
-    if (!line.trim()) { flush(); closeTo(-1); continue; }
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); closeTo(-1); html += '<hr>'; continue; }
-    if ((m = line.match(/^(#{1,4})\s+(.*)$/))) {
-      flush(); closeTo(-1);
-      html += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`;
-      continue;
-    }
-    if ((m = line.match(/^>\s?(.*)$/))) { flush(); closeTo(-1); html += `<blockquote>${inline(m[1])}</blockquote>`; continue; }
-    if ((m = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/))) {
-      flush();
-      const indent = m[1].length, type = /\d/.test(m[2]) ? 'ol' : 'ul';
-      closeTo(indent);
-      const top = stack[stack.length - 1];
-      if (!top || top.indent < indent) {
-        const start = type === 'ol' && parseInt(m[2], 10) !== 1 ? ` start="${parseInt(m[2], 10)}"` : '';
-        html += `<${type}${start}><li>`;
-        stack.push({ type, indent });
-      } else if (top.type !== type) {
-        html += `</li></${stack.pop().type}><${type}><li>`;
-        stack.push({ type, indent });
-      } else {
-        html += '</li><li>';
-      }
-      html += inline(m[3]);
-      continue;
-    }
-    if (stack.length && /^\s/.test(line)) { html += '<br>' + inline(line.trim()); continue; }
-    closeTo(-1);
-    para.push(line);
-  }
-  flush(); closeTo(-1);
-  return html;
 }
 
 /** Ejemplos de la ventana de ayuda (a la izquierda el texto, a la derecha cómo se ve). */
@@ -138,15 +78,6 @@ const state = { id: null, data: blank(), portrait: null };
 const fields = []; // {spec, el} del layout que se está mostrando
 let layout = null;  // layout mostrado (ver layouts/)
 let builtRev = -1;  // versión del layout cuando se construyeron las hojas (el editor la sube)
-
-function place(el, s) {
-  el.classList.add('f');
-  el.style.setProperty('--x', s.x);
-  el.style.setProperty('--y', s.y);
-  el.style.setProperty('--w', s.w);
-  el.style.setProperty('--h', s.h);
-  if (s.title) el.title = s.title;
-}
 
 function build(sheet, specs) {
   for (const s of specs) {
@@ -190,44 +121,20 @@ function build(sheet, specs) {
   }
 }
 
-/* ---- ajuste automático del tamaño de letra ---- */
-const measureCtx = document.createElement('canvas').getContext('2d');
-function fitInput(el) {
-  const base = +el.dataset.fs;
-  const cs = getComputedStyle(el);
-  measureCtx.font = `${cs.fontWeight} ${base}px ${cs.fontFamily}`;
-  const avail = el.offsetWidth - 6;
-  const w = measureCtx.measureText(el.value || '').width;
-  const fs = w > avail && w > 0 ? Math.max(8, base * avail / w) : base;
-  el.style.fontSize = fs + 'px';
-}
 /** Lista de valores de una reserva: reduce la letra si no cabe y muestra la suma como pista. */
 function fitSteps(el, s) {
-  let fs = 13;
-  el.style.fontSize = fs + 'px';
-  while ((el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) && fs > 7) {
-    fs -= 0.5;
-    el.style.fontSize = fs + 'px';
-  }
+  fitBox(el, 13, 7);
   const nums = (el.value.match(/[-+]?\d+/g) || []).map(Number);
   const sum = nums.reduce((a, b) => a + b, 0);
   el.title = 'Valor inicial y sus incrementos, uno por línea' + (nums.length ? `\nReserva máxima: ${sum}` : '');
   const pool = fields.find(f => f.spec.f === s.f.replace(/\.max$/, '.pool'));
   if (pool) pool.el.placeholder = nums.length ? String(sum) : '–';
 }
-function fitMD(el, base = 13) {
-  let fs = base;
-  el.style.fontSize = fs + 'px';
-  while (el.scrollHeight > el.clientHeight + 1 && fs > 6) {
-    fs -= 0.5;
-    el.style.fontSize = fs + 'px';
-  }
-}
 function renderBox(el, s) {
   const v = getPath(state.data, s.f) || '';
   el.innerHTML = renderMD(v);
   el.classList.toggle('empty', !v.trim());
-  fitMD(el, s.fs || 13);
+  fitBox(el, s.fs || 13);
 }
 
 /* ---- editor markdown ---- */
@@ -369,18 +276,22 @@ function buildPortrait() {
     if (f) loadPortrait(f);
   });
   // arrastrar para encuadrar (modo "rellenar")
+  // La imagen se escala para cubrir la zona (a lo alto o a lo ancho) y lo que sobra
+  // se puede desplazar: el desplazamiento sigue al ratón píxel a píxel.
   img.addEventListener('pointerdown', e => {
-    if (state.data.portraitFit !== 'cover') return;
+    if (state.data.portraitFit !== 'cover' || !img.naturalWidth) return;
     e.preventDefault();
     img.setPointerCapture(e.pointerId);
     const r = img.getBoundingClientRect();
+    const k = Math.max(r.width / img.naturalWidth, r.height / img.naturalHeight);
+    const ox = img.naturalWidth * k - r.width, oy = img.naturalHeight * k - r.height; // lo que sobra
     const pos0 = { ...(state.data.portraitPos || { x: 50, y: 50 }) };
     const px = e.clientX, py = e.clientY;
     const move = ev => {
       const clamp = v => Math.round(Math.max(0, Math.min(100, v)) * 10) / 10;
       state.data.portraitPos = {
-        x: clamp(pos0.x - (ev.clientX - px) / r.width * 150),
-        y: clamp(pos0.y - (ev.clientY - py) / r.height * 150),
+        x: ox > 0.5 ? clamp(pos0.x - (ev.clientX - px) / ox * 100) : 50,
+        y: oy > 0.5 ? clamp(pos0.y - (ev.clientY - py) / oy * 100) : 50,
       };
       img.style.objectPosition = `${state.data.portraitPos.x}% ${state.data.portraitPos.y}%`;
     };
@@ -402,13 +313,10 @@ function showPortrait() {
   img.hidden = !has;
   if (has) img.src = state.portrait; else img.removeAttribute('src');
   $('.empty-msg', portraitEl).hidden = has;
-  portraitEl.classList.toggle('cover', state.data.portraitFit === 'cover');
-  portraitEl.classList.toggle('contain', state.data.portraitFit !== 'cover');
+  applyPortraitFit(portraitEl, img, state.data);
   $('[data-a="fit"]', portraitEl).textContent = state.data.portraitFit === 'cover' ? 'Ver entera' : 'Rellenar';
   $('[data-a="fit"]', portraitEl).hidden = !has;
   $('[data-a="clear"]', portraitEl).hidden = !has;
-  const p = state.data.portraitPos || { x: 50, y: 50 };
-  img.style.objectPosition = `${p.x}% ${p.y}%`;
 }
 /** Reduce una imagen a JPEG de como mucho ~600 KB (límite de Firestore: 1 MB por documento). */
 function compressImage(src) {
@@ -471,7 +379,6 @@ function fill() {
  * ===================================================================== */
 // Caja imprimible (px a 96 ppp) común a A4 y Carta con márgenes de 5 mm
 const PRINT_BOX = { landscape: [1008, 753], portrait: [756, 1015] };
-const layoutOverride = new Map(); // ficha -> layout elegido a mano en la barra lateral (no se guarda)
 
 function buildLayout(l) {
   if (editor) closeEditor();
@@ -505,25 +412,9 @@ function buildLayout(l) {
   applyZoom();
 }
 
-/** Layout de la ficha abierta: el elegido a mano o el de su partida. */
-function resolveLayout() {
-  const auto = Mesa.layoutForCharacter(state.id);
-  const manual = getLayout(layoutOverride.get(state.id));
-  return { layout: manual || getLayout(auto.layoutId) || getLayout(DEFAULT_LAYOUT), auto };
-}
+/** El layout de la ficha abierta lo decide su partida (o el de por defecto si no tiene). */
 async function applyLayout() {
-  const { layout: l, auto } = resolveLayout();
-  const sel = $('#layout');
-  const o = (v, t) => { const e = document.createElement('option'); e.value = v; e.textContent = t; return e; };
-  const autoName = (getLayout(auto.layoutId) || getLayout(DEFAULT_LAYOUT)).name;
-  sel.replaceChildren(
-    o('', auto.campaign ? `${autoName} (partida ${auto.campaign.name})` : `${autoName} (por defecto)`),
-    ...LAYOUTS.map(x => o(x.id, x.name)),
-  );
-  sel.value = layoutOverride.has(state.id) ? layoutOverride.get(state.id) : '';
-  sel.title = auto.campaign
-    ? `El layout lo decide la partida "${auto.campaign.name}". Elegir otro aquí solo cambia cómo la ves ahora.`
-    : 'Esta ficha no está en ninguna partida: se usa el layout por defecto. Elegir otro aquí solo cambia cómo la ves ahora.';
+  const l = getLayout(Mesa.layoutForCharacter(state.id).layoutId) || getLayout(DEFAULT_LAYOUT);
   if (l !== layout || l._rev !== builtRev) {
     try { await Editor.ensureImages(l); } catch (e) { status('No se pudo cargar la imagen del layout: ' + (e.code || e.message), true); }
     buildLayout(l);
@@ -593,7 +484,6 @@ async function open(id) {
   fill();
   markActive();
   try { localStorage.setItem('ogoa-last', String(id)); } catch { /* sin almacenamiento */ }
-  document.title = (state.data.name || 'Sin nombre') + ' · Old Gods of Appalachia';
   status('Abierta');
 }
 
@@ -628,7 +518,6 @@ function updateListItem() {
   if (!li) return;
   $('.n', li).textContent = state.data.name || 'Sin nombre';
   $('.d', li).textContent = subtitle(state.data);
-  document.title = (state.data.name || 'Sin nombre') + ' · Old Gods of Appalachia';
 }
 
 /* ---- acciones ---- */
@@ -726,18 +615,14 @@ function markPrint() {
  * ===================================================================== */
 async function init() {
   buildLayout(getLayout(DEFAULT_LAYOUT));
-  $('#layout').addEventListener('change', async e => {
-    if (e.target.value) layoutOverride.set(state.id, e.target.value);
-    else layoutOverride.delete(state.id);
-    await applyLayout();
-    fill();
-  });
   Editor.init({
     status,
     download,
     campaignsUsing: id => Mesa.cache.campaigns.filter(c => (getLayout(c.layoutId) ? c.layoutId : DEFAULT_LAYOUT) === id).length,
-    // ver la ficha abierta con el layout que se está editando
-    preview(id) { layoutOverride.set(state.id, id); Mesa.showView('fichas'); },
+    // fichas para el modo "Ver" del editor
+    characters: () => Mesa.cache.characters,
+    currentCharacter: () => state.id,
+    loadCharacter: id => (id === state.id ? { id, data: state.data, portrait: state.portrait } : Store.get(id)),
   });
   const pfile = $('#portrait-file');
   pfile.addEventListener('change', () => { if (pfile.files[0]) loadPortrait(pfile.files[0]); pfile.value = ''; });

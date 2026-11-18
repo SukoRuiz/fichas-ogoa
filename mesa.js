@@ -23,7 +23,7 @@ const charSort = (a, b) => (a.data.name || '').localeCompare(b.data.name || '', 
 /** Datos en memoria (los personajes los pone app.js al refrescar su lista). */
 export const cache = { players: [], campaigns: [], sessions: [], characters: [] };
 let ctx = null; // { openCharacter(id), newCharacter(data), status(msg, err), playersChanged() }
-const ui = { view: 'fichas', playerId: null, campaignId: null, statsCampaign: '', statsYear: '' };
+const ui = { view: 'fichas', playerId: null, campaignId: null, campaignTab: 'players', statsCampaign: '', statsYear: '' };
 
 export const playerById = id => cache.players.find(p => p.id === id);
 const charById = id => cache.characters.find(c => c.id === id);
@@ -352,10 +352,15 @@ function renderCampaignPanel() {
     </div>
     <p><button type="button" class="link" id="cp-stats">Ver estadísticas completas de esta partida →</button></p>
 
-    <h3>Jugadores y personajes</h3>
-    <div id="cp-members"></div>
-
-    <div class="h3-row"><h3>Sesiones</h3><button type="button" class="btn primary" id="cp-newsess">+ Nueva sesión</button></div>
+    <div class="sub-tabs" role="tablist">
+      <button type="button" role="tab" data-ct="players" aria-selected="${ui.campaignTab === 'players'}">Jugadores <span class="count">${c.members.length}</span></button>
+      <button type="button" role="tab" data-ct="sessions" aria-selected="${ui.campaignTab === 'sessions'}">Sesiones <span class="count">${sess.length}</span></button>
+    </div>
+    <div class="sub-panel" data-cp="players"${ui.campaignTab === 'players' ? '' : ' hidden'}>
+      <div id="cp-members"></div>
+    </div>
+    <div class="sub-panel" data-cp="sessions"${ui.campaignTab === 'sessions' ? '' : ' hidden'}>
+    <div class="sub-bar"><button type="button" class="btn primary" id="cp-newsess">+ Nueva sesión</button></div>
     ${sess.length ? `<div class="table-wrap"><table class="data">
       <thead><tr><th>Nº</th><th>Fecha</th><th>Título</th><th>Estado</th><th class="num">Teóricas</th><th class="num">Reales</th><th class="num">Diferencia</th><th class="num">Asistencia</th></tr></thead>
       <tbody>${sess.map(s => {
@@ -367,6 +372,7 @@ function renderCampaignPanel() {
           <td class="num">${s.status === 'jugada' && p != null && r != null ? S.fmtSigned(r - p) : '—'}</td>
           <td class="num">${att.length ? `${att.filter(a => a.present).length}/${att.length}` : '—'}</td></tr>`;
       }).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay sesiones. Pulsa “Nueva sesión” para registrar la primera.</p>'}
+    </div>
 
     <div class="panel-foot"><button type="button" class="btn danger" id="cp-del">Borrar partida</button></div>
   </div>`;
@@ -375,6 +381,11 @@ function renderCampaignPanel() {
     if (f === 'name' || f === 'status') renderCampaignList();
   });
   renderMembers(c);
+  for (const b of $$('[data-ct]', root)) b.addEventListener('click', () => {
+    ui.campaignTab = b.dataset.ct;
+    for (const x of $$('[data-ct]', root)) x.setAttribute('aria-selected', String(x === b));
+    for (const pnl of $$('[data-cp]', root)) pnl.hidden = pnl.dataset.cp !== ui.campaignTab;
+  });
   for (const r of $$('[data-sess]', root)) r.addEventListener('click', () => openSession(cache.sessions.find(s => s.id === r.dataset.sess)));
   $('#cp-newsess', root).addEventListener('click', () => openSession(null, c));
   $('#cp-stats', root).addEventListener('click', () => { ui.statsCampaign = c.id; ui.statsYear = ''; showView('estadisticas'); });
@@ -389,6 +400,8 @@ function characterOptions(playerId, selected) {
   return h;
 }
 
+const VIEW_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+
 function renderMembers(c) {
   const host = $('#cp-members');
   const used = new Set(c.members.map(m => m.playerId));
@@ -398,14 +411,26 @@ function renderMembers(c) {
       <thead><tr><th>Jugador</th><th>Personaje</th><th></th></tr></thead>
       <tbody>${c.members.map((m, i) => `<tr>
         <td>${esc(playerName(m.playerId))}</td>
-        <td><select data-char="${i}">${characterOptions(m.playerId, m.characterId)}</select></td>
+        <td><span class="char-cell"><select data-char="${i}">${characterOptions(m.playerId, m.characterId)}</select>
+          <button type="button" class="x view" data-view-char="${i}" title="Ver ficha"${m.characterId && charById(m.characterId) ? '' : ' disabled'}>${VIEW_ICON}</button></span></td>
         <td class="num"><button type="button" class="x" data-rm="${i}" title="Quitar de la partida">✕</button></td></tr>`).join('')}
       </tbody></table></div>` : '<p class="muted">Sin jugadores todavía.</p>'}
     <p class="add-row">
       <select id="cp-addplayer">${opt('', free.length ? 'Añadir jugador…' : 'No hay más jugadores activos')}${free.map(p => opt(p.id, p.name)).join('')}</select>
     </p>`;
+  const count = $('[data-ct="players"] .count');
+  if (count) count.textContent = c.members.length;
   const save = () => { queue('campaigns', c, { members: c.members }, 200); renderCampaignList(); };
-  for (const s of $$('[data-char]', host)) s.addEventListener('change', () => { c.members[+s.dataset.char].characterId = s.value; save(); });
+  for (const s of $$('[data-char]', host)) s.addEventListener('change', () => {
+    c.members[+s.dataset.char].characterId = s.value;
+    const v = $(`[data-view-char="${s.dataset.char}"]`, host);
+    if (v) v.disabled = !(s.value && charById(s.value));
+    save();
+  });
+  for (const b of $$('[data-view-char]', host)) b.addEventListener('click', () => {
+    const id = c.members[+b.dataset.viewChar]?.characterId;
+    if (id && charById(id)) ctx.openCharacter(id);
+  });
   for (const b of $$('[data-rm]', host)) b.addEventListener('click', () => { c.members.splice(+b.dataset.rm, 1); save(); renderMembers(c); });
   $('#cp-addplayer', host).addEventListener('change', e => {
     const pid = e.target.value;
