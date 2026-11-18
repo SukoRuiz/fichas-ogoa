@@ -17,8 +17,23 @@ No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) 
 - **Retrato**: haz clic en la zona del retrato o arrastra una imagen. Con "Rellenar" puedes arrastrar la imagen para encuadrarla.
 - **Jugador**: se elige en el desplegable de la barra lateral (o *+ Nuevo jugador…*). Sale en la lista de fichas pero **no se imprime**.
 - **Barra de iconos** (abajo a la izquierda): imprimir, duplicar, borrar, exportar ficha, exportar todas, importar `.json` y ayuda.
-- **Imprimir**: el icono de impresora abre un menú: ambas caras, solo anverso o solo reverso. Formato apaisado (A4 o Carta).
+- **Layout**: debajo del jugador se ve con qué layout se muestra la ficha (lo decide su partida). Se puede elegir otro para verla o imprimirla en ese momento; esa elección no se guarda.
+- **Imprimir**: el icono de impresora abre un menú: todas las páginas o una sola. Cada página sale con la orientación de su layout (apaisada o vertical; A4 o Carta).
   Para imprimir a doble cara, activa "dos caras / voltear por el lado corto" en el diálogo de impresión.
+
+### Layouts de ficha
+
+Un layout es el diseño de la hoja: las imágenes de sus páginas (una o varias, apaisadas o verticales) y dónde va cada dato. Todos los layouts comparten los datos de la ficha, así que la misma ficha se puede ver con cualquiera; lo que un layout no muestra se conserva.
+
+- **Qué layout se usa**: el de la partida en la que juega el personaje. Si está en varias, el de la partida activa con la sesión más reciente; si no está en ninguna, el primero (Oficial OGOA English).
+- **Incluidos**: *Oficial OGOA English* (2 páginas apaisadas) y *Periódico OGOA Español* (2 páginas verticales).
+- **Pestaña Layouts**:
+  - **+** crea un layout nuevo. Con **+ Página** se sube la imagen de cada página (PNG o JPG; se comprime a JPEG para que quepa en la base de datos).
+  - Sobre la imagen se **dibujan las zonas** arrastrando el ratón, y a cada una se le asigna un campo de la ficha. Las habilidades y los ataques son una sola zona de tabla con filas y columnas; las líneas verticales se arrastran para ajustar las columnas.
+  - Clic en una zona para seleccionarla; se mueve arrastrándola y se cambia de tamaño con su esquina. Flechas: 1 px (Mayús: 10 px); Alt + flechas: tamaño; Supr: borrar.
+  - Los layouts incluidos se pueden **Modificar**: se guarda una versión modificada y **Restaurar original** la deshace.
+  - **Duplicar**, **Exportar** (un `.json` con imágenes y zonas) e **Importar** (icono de subida junto al +) sirven para copiar layouts o pasarlos a otra web.
+  - **Ver en la ficha** abre la ficha que tenías abierta con ese layout.
 
 ### Jugadores, partidas y estadísticas
 
@@ -26,7 +41,7 @@ Las pestañas de arriba de la barra lateral cambian de vista: **Fichas · Jugado
 
 - **Jugadores**: nombre, contacto, notas y si está activo. Un jugador puede tener varias fichas; desde su página se abren o se crea una nueva. Se ven sus sesiones, asistencia y horas jugadas.
   Un jugador que ya aparece en partidas no se puede borrar (cuenta en las estadísticas): desmarca *Activo*.
-- **Partidas**: estado (activa, en pausa, terminada), fechas, **periodicidad prevista** (semanal, quincenal…), **duración prevista por sesión** y hora habitual de inicio. Se añaden los jugadores y el personaje que lleva cada uno.
+- **Partidas**: estado (activa, en pausa, terminada), fechas, **periodicidad prevista** (semanal, quincenal…), **duración prevista por sesión**, hora habitual de inicio y **layout de las fichas**. Se añaden los jugadores y el personaje que lleva cada uno.
 - **Sesiones** (dentro de cada partida, *+ Nueva sesión*): fecha, estado (jugada, planificada, cancelada), horario previsto, horario real (inicio, fin y pausas, o solo la duración) y asistencia. La asistencia sale marcada con los jugadores de la partida: desmarca a quien faltó (cuenta como ausencia) o quítalo con ✕ si no estaba convocado; también se puede añadir a alguien que no es de la partida.
 - **Estadísticas**: de todas las partidas o de una, y de todo el tiempo o de un año: partidas, sesiones, horas reales y teóricas (y la diferencia), duración media, asistencia, periodicidad (días entre sesiones: media, mediana y mayor hueco), última y próxima sesión. Gráficos de horas por sesión (real frente a teórica), horas por mes y asistencia por jugador, y tablas por partida, por jugador y por sesión.
 
@@ -46,13 +61,15 @@ En **Firebase (Firestore)**, proyecto `fichas-ogoa`:
 - `players/{id}`: jugadores. Cada ficha guarda el enlace (`data.playerId`) y una copia del nombre (`data.player`).
 - `campaigns/{id}`: partidas, con sus jugadores y personajes (`members`).
 - `sessions/{id}`: sesiones de juego, con horarios y asistencia.
+- `layouts/{id}`: layouts creados o modificados desde la web (páginas y zonas).
+- `layoutImages/{id}__{página}`: la imagen de cada página subida, aparte por tamaño.
 
 Al entrar por primera vez con esta versión, el nombre de jugador que tuviera escrito cada ficha se convierte en un jugador y la ficha queda enlazada (no se borra nada; los nombres iguales sin distinguir mayúsculas se agrupan).
 
 Para entrar hay que **iniciar sesión con Google**, y solo pueden leer o escribir los correos autorizados en las reglas de Firestore. El código de la web es público, pero los datos no.
 
 - **Dar o quitar acceso:** consola de Firebase → Firestore Database → Reglas → edita la lista de correos (cuentas de Google, en minúsculas) → **Publicar**. No hace falta tocar el código.
-- **Copia de seguridad:** icono *Exportar todas* (vista Fichas), que descarga un `.json` con todas las fichas, retratos, jugadores, partidas y sesiones. *Importar* lo vuelve a subir como datos nuevos (los jugadores con el mismo nombre se reutilizan). Las copias antiguas, solo con fichas, siguen sirviendo.
+- **Copia de seguridad:** icono *Exportar todas* (vista Fichas), que descarga un `.json` con todas las fichas, retratos, jugadores, partidas, sesiones y layouts guardados. *Importar* lo vuelve a subir como datos nuevos (los jugadores con el mismo nombre se reutilizan). Las copias antiguas, solo con fichas, siguen sirviendo.
 - **Fichas antiguas:** si un navegador tenía fichas de la versión anterior (guardadas en el navegador), aparece el botón *Subir a la nube N fichas de este navegador*.
 - El personaje de ejemplo (Jasper Stonehill) ya no está en el repositorio. Si hace falta, se importa con *Importar .json*.
 
@@ -110,11 +127,16 @@ style.css                  estilos (pantalla e impresión)
 app.js                     lógica de las fichas: campos, Markdown, sesión, importar/exportar
 mesa.js                    jugadores, partidas, sesiones y vista de estadísticas
 stats.js                   cálculos (horas, asistencia, periodicidad) y gráficos
+editor.js                  editor de layouts (pestaña Layouts)
+layouts/index.js           lista de layouts incluidos + los guardados en Firestore
+layouts/fields.js          catálogo de campos, tablas y formato de un layout
+layouts/ogoa-oficial-en.js layout "Oficial OGOA English"
+layouts/periodico-es.js    layout "Periódico OGOA Español"
 store.js                   acceso a Firebase (login con Google y Firestore)
 firebase-config.js         configuración pública del proyecto Firebase
 manifest.webmanifest       nombre e iconos de la web (para instalarla como app)
-img/anverso.jpg            plantilla oficial (anverso)
-img/reverso.jpg            plantilla oficial (reverso)
+img/oficial-en-*.jpg       plantilla oficial en inglés (anverso y reverso)
+img/periodico-es-*.png     plantilla "periódico" en español (anverso y reverso)
 img/icon.svg               icono de la web (luna sobre los Apalaches)
 img/icon-*.png, img/apple-touch-icon.png   el mismo icono en PNG
 ```

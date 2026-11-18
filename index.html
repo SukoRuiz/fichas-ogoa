@@ -13,7 +13,7 @@
 <meta name="theme-color" content="#15100c">
 <link rel="stylesheet" href="style.css">
 </head>
-<body data-print="both">
+<body>
 <aside id="side">
   <header>
     <img class="logo" src="img/icon.svg" alt="">
@@ -28,6 +28,7 @@
     <button type="button" role="tab" data-view="jugadores">Jugadores</button>
     <button type="button" role="tab" data-view="partidas">Partidas</button>
     <button type="button" role="tab" data-view="estadisticas">Estadísticas</button>
+    <button type="button" role="tab" data-view="layouts">Layouts</button>
   </nav>
 
   <div class="side-view grow" data-view="fichas">
@@ -35,6 +36,7 @@
       <select id="player" title="Jugador de la ficha abierta. Sale en la lista pero no se imprime."></select>
       <button id="btn-new" class="primary icon" type="button" title="Nueva ficha"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
     </div>
+    <label class="layout-row"><span>Layout</span><select id="layout"></select></label>
     <ul id="list" class="list"></ul>
     <button id="btn-migrate" type="button" hidden></button>
   </div>
@@ -48,6 +50,16 @@
       <button id="btn-new-campaign" class="primary icon" type="button" title="Nueva partida"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>
     <ul id="campaign-list" class="list"></ul>
   </div>
+  <div class="side-view grow" data-view="layouts" hidden>
+    <div class="side-row"><span>Layouts de ficha</span>
+      <span class="side-btns">
+        <button id="btn-import-layout" class="icon" type="button" title="Importar un layout (.json)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg></button>
+        <button id="btn-new-layout" class="primary icon" type="button" title="Nuevo layout"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </span></div>
+    <ul id="layout-list" class="list"></ul>
+    <input type="file" id="layout-file" accept="application/json,.json" multiple hidden>
+    <input type="file" id="layout-page-file" accept="image/*" hidden>
+  </div>
   <div class="side-view grow" data-view="estadisticas" hidden>
     <p class="side-hint">Horas jugadas, horas teóricas frente a reales, asistencia y periodicidad, de todas las partidas o de una en concreto.</p>
     <p class="side-hint">Pasa el ratón por los gráficos para ver el detalle. Pulsa en una sesión para editarla.</p>
@@ -58,9 +70,6 @@
     <div class="menu-wrap">
       <button id="btn-print" class="icon" type="button" title="Imprimir ficha…" aria-haspopup="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/></svg></button>
       <div id="print-menu" class="menu" hidden>
-        <button type="button" data-print="both">Ambas caras</button>
-        <button type="button" data-print="front">Solo anverso</button>
-        <button type="button" data-print="back">Solo reverso</button>
       </div>
     </div>
     <button id="btn-dup" class="icon" type="button" title="Duplicar ficha"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 4H5a1 1 0 0 0-1 1v11"/></svg></button>
@@ -76,11 +85,11 @@
 </aside>
 
 <main id="main">
-  <div class="sheet" id="front"><img class="bg" src="img/anverso.jpg" alt=""></div>
-  <div class="sheet" id="back"><img class="bg" src="img/reverso.jpg" alt=""></div>
+  <div id="sheets"></div>
   <section class="panel" id="panel-jugadores" hidden></section>
   <section class="panel" id="panel-partidas" hidden></section>
   <section class="panel" id="panel-estadisticas" hidden></section>
+  <section class="panel" id="panel-layouts" hidden></section>
 </main>
 
 <div id="session-modal" class="modal" hidden></div>

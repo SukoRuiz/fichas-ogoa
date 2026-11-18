@@ -7,6 +7,8 @@
  *      players/{id}     -> { name, contact, notes, active, ...meta }
  *      campaigns/{id}   -> partidas: { name, status, members: [{playerId, characterId}], ... }
  *      sessions/{id}    -> sesiones de juego: { campaignId, date, horarios, attendance, ... }
+ *      layouts/{id}     -> layouts de ficha creados o modificados desde la web: { name, pages }
+ *      layoutImages/{id}__{página} -> { img } imagen de cada página subida
  *  - LocalStore: la base de datos antigua del navegador (IndexedDB). Solo se usa
  *    para subir a la nube las fichas que se crearon antes de usar Firebase.
  */
@@ -111,11 +113,25 @@ function collectionStore(name) {
       }
     },
     remove(id) { return this.removeMany([id]); },
+    async get(id) {
+      const d = await getDoc(doc(db, name, id));
+      return d.exists() ? { ...d.data(), id } : null;
+    },
+    /** Crea o sustituye un documento con un id concreto. */
+    async set(id, obj) {
+      const b = writeBatch(db);
+      b.set(doc(db, name, id), { ...obj, updated_at: now(), updated_by: who() });
+      await b.commit();
+    },
+    newId: () => doc(collection(db, name)).id,
   };
 }
 export const Players = collectionStore('players');
 export const Campaigns = collectionStore('campaigns');
 export const Sessions = collectionStore('sessions');
+/* layouts de ficha guardados desde la web y sus imágenes (una por página, aparte por tamaño) */
+export const LayoutDocs = collectionStore('layouts');
+export const LayoutImages = collectionStore('layoutImages');
 
 /* ---------------- IndexedDB antiguo (solo lectura, para migrar) ---------------- */
 export const LocalStore = {

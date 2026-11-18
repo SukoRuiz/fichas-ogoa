@@ -5,6 +5,9 @@
  */
 import { Cloud as Store, LocalStore, Auth } from './store.js';
 import * as Mesa from './mesa.js';
+import { LAYOUTS, DEFAULT_LAYOUT, getLayout, orientationOf } from './layouts/index.js';
+import { expandFields } from './layouts/fields.js';
+import * as Editor from './editor.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -53,86 +56,9 @@ const getPath = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), 
 function setPath(o, p, v) {
   const ks = p.split('.');
   const last = ks.pop();
-  ks.reduce((a, k) => a[k], o)[last] = v;
+  // un layout puede usar rutas que la ficha aún no tiene (p. ej. más filas de habilidades)
+  ks.reduce((a, k, i) => (a[k] ??= /^\d+$/.test(ks[i + 1] ?? last) ? [] : {}), o)[last] = v;
 }
-
-/* =====================================================================
- * Disposición de campos sobre las plantillas (px sobre 1200 × 896)
- * ===================================================================== */
-const F = (k, f, x, y, w, h, o = {}) => ({ k, f, x, y, w, h, ...o });
-
-const FRONT = [
-  F('text', 'name', 40, 55, 335, 26, { fs: 20, cls: 'center', ph: 'Nombre' }),
-  F('text', 'descriptor', 68, 102, 134, 22, { fs: 16, cls: 'center', ph: 'descriptor' }),
-  F('text', 'type', 210, 102, 134, 22, { fs: 16, cls: 'center', ph: 'tipo' }),
-  F('text', 'focus', 40, 149, 335, 24, { fs: 16, cls: 'center', ph: 'foco' }),
-  F('text', 'tier', 40, 216, 108, 36, { fs: 26, cls: 'center' }),
-  F('text', 'effort', 152, 216, 108, 36, { fs: 26, cls: 'center' }),
-  F('text', 'xp', 264, 216, 110, 36, { fs: 26, cls: 'center' }),
-
-  F('cb', 'adv.capabilities', 415, 54, 14, 14),
-  F('cb', 'adv.perfection', 510, 54, 13, 14),
-  F('cb', 'adv.effort', 596, 54, 13, 14),
-  F('cb', 'adv.skill', 670, 54, 13, 14),
-  F('cb', 'adv.other', 750, 54, 13, 14),
-
-  F('text', 'recovery.bonus', 98, 457, 52, 40, { fs: 26, cls: 'center' }),
-  F('cb', 'recovery.action', 41, 508, 13, 12),
-  F('cb', 'recovery.hour', 98, 508, 13, 12),
-  F('cb', 'recovery.tenMin', 41, 531, 13, 12),
-  F('cb', 'recovery.tenHours', 98, 531, 13, 12),
-  F('cb', 'damage.impaired', 179, 457, 12, 12),
-  F('cb', 'damage.debilitated', 286, 457, 12, 12),
-
-  F('md', 'abilities', 414, 182, 378, 466),
-  F('md', 'cyphers', 824, 182, 342, 312),
-  F('text', 'cypherLimit', 1110, 517, 60, 28, { fs: 20, cls: 'center' }),
-  F('md', 'equipment', 824, 582, 342, 218),
-  F('text', 'armorDetails', 902, 837, 202, 20, { fs: 13 }),
-  F('text', 'armor', 1116, 826, 54, 30, { fs: 22, cls: 'center' }),
-];
-
-// Reservas: [clave, x reserva, ancho reserva, x ventaja, ancho ventaja]
-// Columna izquierda: total (reserva actual). Columna derecha: lista con el valor
-// inicial y sus incrementos (uno por línea) y, abajo, la ventaja (Edge).
-for (const [k, px, pw, ex, ew] of [
-  ['might', 36, 56, 96, 52], ['speed', 152, 54, 208, 52], ['intellect', 264, 54, 320, 56],
-]) {
-  FRONT.push(
-    F('text', `${k}.pool`, px, 302, pw, 88, { fs: 36, cls: 'center', ph: '–', title: 'Reserva actual' }),
-    F('steps', `${k}.max`, ex, 300, ew, 66, { ph: 'inicial\n+…' }),
-    F('text', `${k}.edge`, ex, 368, ew, 22, { fs: 17, cls: 'center', ph: '–', title: 'Ventaja (Edge)' }),
-  );
-}
-
-// Habilidades: 12 filas entre y=595 y y=840
-for (let i = 0; i < SKILL_ROWS; i++) {
-  const y = 595 + i * (245 / SKILL_ROWS) + 1, h = 245 / SKILL_ROWS - 2;
-  FRONT.push(
-    F('text', `skills.${i}.name`, 35, y, 256, h, { fs: 14 }),
-    F('text', `skills.${i}.test`, 294, y, 18, h, { fs: 12, cls: 'center' }),
-    F('dot', `skills.${i}.t`, 315, y, 19, h, { title: 'Entrenado' }),
-    F('dot', `skills.${i}.s`, 336, y, 19, h, { title: 'Especializado' }),
-    F('dot', `skills.${i}.i`, 357, y, 21, h, { title: 'Incapacidad' }),
-  );
-}
-
-// Ataques: 7 filas entre y=694 y y=838
-for (let i = 0; i < ATTACK_ROWS; i++) {
-  const y = 694 + i * (144 / ATTACK_ROWS) + 1, h = 144 / ATTACK_ROWS - 2;
-  FRONT.push(
-    F('text', `attacks.${i}.name`, 412, y, 294, h, { fs: 14 }),
-    F('text', `attacks.${i}.mod`, 710, y, 37, h, { fs: 13, cls: 'center' }),
-    F('text', `attacks.${i}.damage`, 750, y, 45, h, { fs: 13, cls: 'center' }),
-  );
-}
-
-const BACK = [
-  F('md', 'background', 22, 124, 348, 466),
-  F('md', 'arcs', 22, 622, 348, 254),
-  F('md', 'notes', 414, 124, 350, 750),
-  F('portrait', 'portrait', 815, 62, 375, 820),
-];
 
 /* =====================================================================
  * Markdown mínimo (negrita, cursiva, listas anidadas, títulos, citas, hr)
@@ -209,7 +135,9 @@ const MD_EXAMPLES = [
  * Construcción de la interfaz
  * ===================================================================== */
 const state = { id: null, data: blank(), portrait: null };
-const fields = []; // {spec, el}
+const fields = []; // {spec, el} del layout que se está mostrando
+let layout = null;  // layout mostrado (ver layouts/)
+let builtRev = -1;  // versión del layout cuando se construyeron las hojas (el editor la sube)
 
 function place(el, s) {
   el.classList.add('f');
@@ -287,8 +215,8 @@ function fitSteps(el, s) {
   const pool = fields.find(f => f.spec.f === s.f.replace(/\.max$/, '.pool'));
   if (pool) pool.el.placeholder = nums.length ? String(sum) : '–';
 }
-function fitMD(el) {
-  let fs = 13;
+function fitMD(el, base = 13) {
+  let fs = base;
   el.style.fontSize = fs + 'px';
   while (el.scrollHeight > el.clientHeight + 1 && fs > 6) {
     fs -= 0.5;
@@ -299,7 +227,7 @@ function renderBox(el, s) {
   const v = getPath(state.data, s.f) || '';
   el.innerHTML = renderMD(v);
   el.classList.toggle('empty', !v.trim());
-  fitMD(el);
+  fitMD(el, s.fs || 13);
 }
 
 /* ---- editor markdown ---- */
@@ -417,6 +345,7 @@ function buildPortrait() {
   const img = $('img', box);
   const file = $('#portrait-file');
   $('.empty-msg', box).addEventListener('click', () => file.click());
+  box.addEventListener('dblclick', e => { if (e.target === img) file.click(); });
   box.addEventListener('click', e => {
     const a = e.target.dataset.a;
     if (a === 'load') file.click();
@@ -431,7 +360,6 @@ function buildPortrait() {
       savePortrait();
     }
   });
-  file.addEventListener('change', () => { if (file.files[0]) loadPortrait(file.files[0]); file.value = ''; });
   box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('drag'); });
   box.addEventListener('dragleave', () => box.classList.remove('drag'));
   box.addEventListener('drop', e => {
@@ -468,6 +396,7 @@ function buildPortrait() {
   return box;
 }
 function showPortrait() {
+  if (!portraitEl) return; // el layout no tiene retrato
   const img = $('img', portraitEl);
   const has = !!state.portrait;
   img.hidden = !has;
@@ -537,6 +466,70 @@ function fill() {
   fillPlayerSelect();
 }
 
+/* =====================================================================
+ * Layouts: qué hojas se muestran y dónde va cada campo
+ * ===================================================================== */
+// Caja imprimible (px a 96 ppp) común a A4 y Carta con márgenes de 5 mm
+const PRINT_BOX = { landscape: [1008, 753], portrait: [756, 1015] };
+const layoutOverride = new Map(); // ficha -> layout elegido a mano en la barra lateral (no se guarda)
+
+function buildLayout(l) {
+  if (editor) closeEditor();
+  layout = l;
+  builtRev = l._rev;
+  fields.length = 0;
+  portraitEl = null;
+  const host = $('#sheets');
+  host.replaceChildren();
+  for (const pg of l.pages) {
+    const o = orientationOf(pg);
+    const sheet = document.createElement('div');
+    sheet.className = `sheet ${o}`;
+    sheet.dataset.page = pg.id;
+    sheet.style.width = pg.width + 'px';
+    sheet.style.height = pg.height + 'px';
+    const [pw, ph] = PRINT_BOX[o];
+    sheet.style.setProperty('--pz', Math.min(pw / pg.width, ph / pg.height).toFixed(4));
+    if (pg.paper) sheet.style.background = pg.paper;
+    if (pg.background) {
+      const img = document.createElement('img');
+      img.className = 'bg';
+      img.alt = '';
+      img.src = pg.background;
+      sheet.appendChild(img);
+    }
+    build(sheet, expandFields(pg.fields));
+    host.appendChild(sheet);
+  }
+  buildPrintMenu();
+  applyZoom();
+}
+
+/** Layout de la ficha abierta: el elegido a mano o el de su partida. */
+function resolveLayout() {
+  const auto = Mesa.layoutForCharacter(state.id);
+  const manual = getLayout(layoutOverride.get(state.id));
+  return { layout: manual || getLayout(auto.layoutId) || getLayout(DEFAULT_LAYOUT), auto };
+}
+async function applyLayout() {
+  const { layout: l, auto } = resolveLayout();
+  const sel = $('#layout');
+  const o = (v, t) => { const e = document.createElement('option'); e.value = v; e.textContent = t; return e; };
+  const autoName = (getLayout(auto.layoutId) || getLayout(DEFAULT_LAYOUT)).name;
+  sel.replaceChildren(
+    o('', auto.campaign ? `${autoName} (partida ${auto.campaign.name})` : `${autoName} (por defecto)`),
+    ...LAYOUTS.map(x => o(x.id, x.name)),
+  );
+  sel.value = layoutOverride.has(state.id) ? layoutOverride.get(state.id) : '';
+  sel.title = auto.campaign
+    ? `El layout lo decide la partida "${auto.campaign.name}". Elegir otro aquí solo cambia cómo la ves ahora.`
+    : 'Esta ficha no está en ninguna partida: se usa el layout por defecto. Elegir otro aquí solo cambia cómo la ves ahora.';
+  if (l !== layout || l._rev !== builtRev) {
+    try { await Editor.ensureImages(l); } catch (e) { status('No se pudo cargar la imagen del layout: ' + (e.code || e.message), true); }
+    buildLayout(l);
+  }
+}
+
 /** Desplegable de jugador de la ficha abierta (con opción de crear uno nuevo). */
 function fillPlayerSelect() {
   const sel = $('#player');
@@ -596,6 +589,7 @@ async function open(id) {
   // la lista en memoria comparte los datos de la ficha abierta (para jugadores y partidas)
   const cached = Mesa.cache.characters.find(c => c.id === rec.id);
   if (cached) cached.data = state.data;
+  await applyLayout();
   fill();
   markActive();
   try { localStorage.setItem('ogoa-last', String(id)); } catch { /* sin almacenamiento */ }
@@ -677,6 +671,7 @@ async function importFiles(files) {
         firstId ??= rec.id;
         n++;
       }
+      if (full && Array.isArray(json.layouts)) await Editor.restore(json.layouts);
       if (full && Array.isArray(json.campaigns)) games = await Mesa.restoreGames(json, pMap, charMap);
     } catch (e) {
       status(`No se pudo importar ${f.name}: ${e.code || e.message}`, true);
@@ -694,19 +689,58 @@ async function importFiles(files) {
 
 /* ---- escalado en pantalla ---- */
 function applyZoom() {
-  const main = $('#main');
-  const avail = main.clientWidth - 48;
-  const z = Math.max(0.35, Math.min(1.35, avail / 1200));
-  $$('.sheet').forEach(s => { s.style.zoom = z; });
+  const avail = $('#main').clientWidth - 48;
+  for (const s of $$('#sheets .sheet')) {
+    s.style.zoom = Math.max(0.35, Math.min(1.35, avail / parseFloat(s.style.width)));
+  }
+}
+
+/* ---- imprimir: todas las páginas o una sola ---- */
+let printSel = 'all';
+function buildPrintMenu() {
+  const m = $('#print-menu');
+  m.replaceChildren();
+  const add = (v, t) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.print = v;
+    b.textContent = t;
+    m.appendChild(b);
+  };
+  const n = layout.pages.length;
+  add('all', n === 1 ? 'Imprimir' : n === 2 ? 'Ambas caras' : `Todas las páginas (${n})`);
+  if (n > 1) for (const p of layout.pages) add(p.id, `Solo ${p.name.toLowerCase()}`);
+}
+function markPrint() {
+  let first = true;
+  for (const s of $$('#sheets .sheet')) {
+    const skip = printSel !== 'all' && s.dataset.page !== printSel;
+    s.classList.toggle('skip-print', skip);
+    s.classList.toggle('first-print', !skip && first);
+    if (!skip) first = false;
+  }
 }
 
 /* =====================================================================
  * Arranque
  * ===================================================================== */
 async function init() {
-  build($('#front'), FRONT);
-  build($('#back'), BACK);
-  applyZoom();
+  buildLayout(getLayout(DEFAULT_LAYOUT));
+  $('#layout').addEventListener('change', async e => {
+    if (e.target.value) layoutOverride.set(state.id, e.target.value);
+    else layoutOverride.delete(state.id);
+    await applyLayout();
+    fill();
+  });
+  Editor.init({
+    status,
+    download,
+    campaignsUsing: id => Mesa.cache.campaigns.filter(c => (getLayout(c.layoutId) ? c.layoutId : DEFAULT_LAYOUT) === id).length,
+    // ver la ficha abierta con el layout que se está editando
+    preview(id) { layoutOverride.set(state.id, id); Mesa.showView('fichas'); },
+  });
+  const pfile = $('#portrait-file');
+  pfile.addEventListener('change', () => { if (pfile.files[0]) loadPortrait(pfile.files[0]); pfile.value = ''; });
   window.addEventListener('resize', applyZoom);
 
   $('#btn-new').addEventListener('click', () => createNew());
@@ -727,6 +761,9 @@ async function init() {
     status,
     async openCharacter(id) { Mesa.showView('fichas'); await open(id); },
     async newCharacter(data) { Mesa.showView('fichas'); await createNew(data); },
+    // al volver a las fichas: la partida puede haber cambiado de layout
+    async onEnterFichas() { if (state.id != null) { await applyLayout(); fill(); } },
+    renderLayouts: () => Editor.render(),
     async playersChanged() {
       // un jugador renombrado o borrado: la ficha abierta debe reflejarlo antes de guardarse
       const p = Mesa.playerById(state.data.playerId);
@@ -766,12 +803,15 @@ async function init() {
     status('Preparando copia…');
     const recs = await Promise.all((await Store.all()).map(r => Store.get(r.id)));
     await Mesa.load();
+    await Editor.flush();
+    const layouts = await Editor.snapshot();
     status('Copia descargada');
     const stamp = new Date().toISOString().slice(0, 10);
     download(`fichas-ogoa-${stamp}.json`, {
       app: 'ogoa-fichas', version: 2,
       characters: recs.map(r => ({ id: r.id, data: r.data, portrait: r.portrait })),
       ...Mesa.snapshot(),
+      layouts,
     });
   });
   $('#btn-import').addEventListener('click', () => $('#import-file').click());
@@ -792,10 +832,12 @@ async function init() {
     const what = e.target.dataset.print;
     if (!what) return;
     toggleMenu(false);
-    document.body.dataset.print = what;
     if (editor) closeEditor();
     await save();
+    printSel = what;
+    markPrint();
     window.print();
+    printSel = 'all';
   });
 
   // ayuda de Markdown
@@ -814,11 +856,11 @@ async function init() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; toggleMenu(false); }
   });
-  window.addEventListener('beforeprint', () => { if (editor) closeEditor(); });
+  window.addEventListener('beforeprint', () => { if (editor) closeEditor(); markPrint(); });
   window.addEventListener('beforeunload', e => {
-    if (dirty || Mesa.hasPending()) { save(); Mesa.flushAll(); e.preventDefault(); }
+    if (dirty || Mesa.hasPending() || Editor.hasPending()) { save(); Mesa.flushAll(); Editor.flush(); e.preventDefault(); }
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(); Mesa.flushAll(); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(); Mesa.flushAll(); Editor.flush(); } });
 
   // re-ajustar cuando terminen de cargar las fuentes web
   document.fonts?.ready.then(() => { if (state.id != null) fill(); });
@@ -832,7 +874,7 @@ async function init() {
     }
   });
   for (const id of ['#btn-logout', '#btn-switch']) {
-    $(id).addEventListener('click', async () => { await save(); await Mesa.flushAll(); await Auth.signOut(); location.reload(); });
+    $(id).addEventListener('click', async () => { await save(); await Mesa.flushAll(); await Editor.flush(); await Auth.signOut(); location.reload(); });
   }
   $('#btn-migrate').addEventListener('click', migrateLocal);
 
@@ -868,6 +910,9 @@ async function startSession(user) {
   sessionStarted = true;
   $('#login').hidden = true;
   $('#user-email').textContent = user.email;
+
+  // layouts creados o modificados desde la web
+  try { await Editor.load(); } catch (e) { status('No se pudieron cargar los layouts guardados: ' + (e.code || e.message), true); }
 
   // jugadores, partidas y sesiones; las fichas antiguas con "Jugador" escrito a mano se enlazan solas
   try {

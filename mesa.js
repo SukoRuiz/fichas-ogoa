@@ -3,6 +3,7 @@
  *  players/{id}    { name, contact, notes, active }
  *  campaigns/{id}  { name, status, description, startDate, endDate, frequency (días; 0 = irregular),
  *                    plannedHours (duración prevista por sesión), defaultStart ("HH:MM"),
+ *                    layoutId (layout de ficha que usa la partida; ver layouts/),
  *                    members: [{ playerId, characterId }] }
  *  sessions/{id}   { campaignId, date, status (jugada|planificada|cancelada), title,
  *                    plannedStart, plannedEnd, actualStart, actualEnd, breakMin, realHours,
@@ -10,6 +11,7 @@
  */
 import { Cloud, Players, Campaigns, Sessions } from './store.js';
 import * as S from './stats.js';
+import { LAYOUTS, DEFAULT_LAYOUT, getLayout } from './layouts/index.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -122,7 +124,7 @@ function bind(root, coll, rec, onInput) {
 /* =====================================================================
  * Vistas
  * ===================================================================== */
-export const VIEWS = ['fichas', 'jugadores', 'partidas', 'estadisticas'];
+export const VIEWS = ['fichas', 'jugadores', 'partidas', 'estadisticas', 'layouts'];
 
 export function showView(v) {
   if (!VIEWS.includes(v)) v = 'fichas';
@@ -130,14 +132,16 @@ export function showView(v) {
   document.body.dataset.view = v;
   for (const b of $$('#tabs [data-view]')) b.setAttribute('aria-selected', String(b.dataset.view === v));
   for (const el of $$('.side-view')) el.hidden = !el.dataset.view.split(' ').includes(v);
-  for (const s of $$('.sheet')) s.hidden = v !== 'fichas';
+  $('#sheets').hidden = v !== 'fichas';
   for (const p of $$('.panel')) p.hidden = p.id !== 'panel-' + v;
   try { localStorage.setItem('ogoa-view', v); } catch { /* nada */ }
   if (location.hash !== '#' + v) history.replaceState(null, '', '#' + v);
   if (v === 'jugadores') { renderPlayerList(); renderPlayerPanel(); }
   if (v === 'partidas') { renderCampaignList(); renderCampaignPanel(); }
   if (v === 'estadisticas') renderStats();
+  if (v === 'layouts') ctx.renderLayouts?.();
   $('#main').scrollTop = 0;
+  if (v === 'fichas') ctx.onEnterFichas?.();
 }
 
 export function init(context) {
@@ -155,7 +159,7 @@ export function init(context) {
   $('#btn-new-campaign').addEventListener('click', async () => {
     const c = await Campaigns.create({
       name: 'Nueva partida', status: 'activa', description: '', startDate: S.today(), endDate: '',
-      frequency: 7, plannedHours: 4, defaultStart: '', members: [],
+      frequency: 7, plannedHours: 4, defaultStart: '', layoutId: DEFAULT_LAYOUT, members: [],
     });
     cache.campaigns.push(c);
     ui.campaignId = c.id;
@@ -318,6 +322,7 @@ function renderCampaignPanel() {
   if (!c && cache.campaigns.length) { c = [...cache.campaigns].sort(byName)[0]; ui.campaignId = c.id; renderCampaignList(); }
   if (!c) { root.innerHTML = emptyPanel('Partidas', 'Crea la primera partida con el botón + de la barra lateral. Después añade sus jugadores y ve registrando cada sesión.'); return; }
 
+  if (!getLayout(c.layoutId)) c.layoutId = DEFAULT_LAYOUT; // partidas anteriores a los layouts
   const sess = sessionsOf(c.id);
   const nums = S.numberSessions(sess);
   const sum = S.summarize(sess, campaignMap());
@@ -335,6 +340,7 @@ function renderCampaignPanel() {
       <label>Periodicidad prevista <select data-f="frequency" data-num>${S.FREQS.map(f => opt(f.v, f.label)).join('')}</select></label>
       <label>Duración prevista por sesión (h) <input type="number" min="0" step="0.5" data-f="plannedHours" data-num></label>
       <label>Hora habitual de inicio <input type="time" data-f="defaultStart"></label>
+      <label>Layout de las fichas <select data-f="layoutId">${LAYOUTS.map(l => opt(l.id, l.name)).join('')}</select></label>
     </div>
 
     <div class="tiles">
@@ -759,6 +765,19 @@ export async function restoreGames(json, pMap, charMap) {
     n++;
   }
   return { campaigns: cMap.size, sessions: n };
+}
+
+/**
+ * Layout con el que se muestra una ficha: el de su partida. Si está en varias, manda
+ * la activa con la sesión más reciente; si no está en ninguna, el layout por defecto.
+ */
+export function layoutForCharacter(charId) {
+  const rank = { activa: 0, pausada: 1, terminada: 2 };
+  const last = c => sessionsOf(c.id).filter(s => s.status !== 'cancelada').at(-1)?.date || c.startDate || '';
+  const camps = cache.campaigns.filter(c => c.members.some(m => m.characterId === charId))
+    .sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || last(b).localeCompare(last(a)));
+  const c = camps[0] || null;
+  return { layoutId: getLayout(c?.layoutId) ? c.layoutId : DEFAULT_LAYOUT, campaign: c };
 }
 
 export const currentView = () => ui.view;
