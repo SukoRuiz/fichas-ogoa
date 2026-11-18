@@ -1,6 +1,6 @@
-# Fichas de personaje · Old Gods of Appalachia
+# Mesa de juego · Old Gods of Appalachia
 
-Web sencilla para que el Director de Juego cree, rellene e imprima fichas de personaje de *Old Gods of Appalachia* sobre la plantilla oficial (anverso y reverso).
+Web sencilla para que el Director de Juego cree, rellene e imprima fichas de personaje de *Old Gods of Appalachia* sobre la plantilla oficial (anverso y reverso), y lleve el registro de jugadores, partidas y sesiones con sus estadísticas.
 
 No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) que se publican gratis con **GitHub Pages**.
 
@@ -14,11 +14,28 @@ No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) 
   `**negrita**`, `*cursiva*`, `- lista`, `1. lista`, `### título`, `---`, `> cita`. Si el texto no cabe, la letra se reduce sola.
   El icono **?** de la barra inferior abre una ayuda con ejemplos y cómo se ven.
 - **Might / Speed / Intellect**: a la izquierda el total (reserva actual); a la derecha, el valor inicial y sus incrementos, uno por línea (`10`, `+4`, `+7`); debajo, la ventaja (*Edge*). Si el total está vacío, se sugiere la suma de la lista (no se imprime).
-- **Retrato**: haz clic en la zona del retrato o arrastra una imagen. Con "Rellenar" puedes arrastrar la imagen para encuadrarla; en ese modo los bordes se difuminan sobre el papel.
-- **Jugador**: se escribe en la barra lateral. Sale en la lista de fichas pero **no se imprime**.
+- **Retrato**: haz clic en la zona del retrato o arrastra una imagen. Con "Rellenar" puedes arrastrar la imagen para encuadrarla.
+- **Jugador**: se elige en el desplegable de la barra lateral (o *+ Nuevo jugador…*). Sale en la lista de fichas pero **no se imprime**.
 - **Barra de iconos** (abajo a la izquierda): imprimir, duplicar, borrar, exportar ficha, exportar todas, importar `.json` y ayuda.
 - **Imprimir**: el icono de impresora abre un menú: ambas caras, solo anverso o solo reverso. Formato apaisado (A4 o Carta).
   Para imprimir a doble cara, activa "dos caras / voltear por el lado corto" en el diálogo de impresión.
+
+### Jugadores, partidas y estadísticas
+
+Las pestañas de arriba de la barra lateral cambian de vista: **Fichas · Jugadores · Partidas · Estadísticas**.
+
+- **Jugadores**: nombre, contacto, notas y si está activo. Un jugador puede tener varias fichas; desde su página se abren o se crea una nueva. Se ven sus sesiones, asistencia y horas jugadas.
+  Un jugador que ya aparece en partidas no se puede borrar (cuenta en las estadísticas): desmarca *Activo*.
+- **Partidas**: estado (activa, en pausa, terminada), fechas, **periodicidad prevista** (semanal, quincenal…), **duración prevista por sesión** y hora habitual de inicio. Se añaden los jugadores y el personaje que lleva cada uno.
+- **Sesiones** (dentro de cada partida, *+ Nueva sesión*): fecha, estado (jugada, planificada, cancelada), horario previsto, horario real (inicio, fin y pausas, o solo la duración) y asistencia. La asistencia sale marcada con los jugadores de la partida: desmarca a quien faltó (cuenta como ausencia) o quítalo con ✕ si no estaba convocado; también se puede añadir a alguien que no es de la partida.
+- **Estadísticas**: de todas las partidas o de una, y de todo el tiempo o de un año: partidas, sesiones, horas reales y teóricas (y la diferencia), duración media, asistencia, periodicidad (días entre sesiones: media, mediana y mayor hueco), última y próxima sesión. Gráficos de horas por sesión (real frente a teórica), horas por mes y asistencia por jugador, y tablas por partida, por jugador y por sesión.
+
+Cómo se calcula:
+
+- *Horas teóricas*: el horario previsto de la sesión; si no tiene, la duración prevista de la partida.
+- *Horas reales*: inicio a fin real menos las pausas; si no hay horario, la duración escrita a mano. Las sesiones jugadas sin ningún dato real no suman horas reales (se avisa).
+- Solo cuentan las sesiones **jugadas**. Las planificadas son futuras y las canceladas se cuentan aparte.
+- *Asistencia*: presentes entre convocados (los jugadores que figuran en cada sesión).
 
 ## Dónde se guardan las fichas
 
@@ -26,11 +43,16 @@ En **Firebase (Firestore)**, proyecto `fichas-ogoa`:
 
 - `characters/{id}`: datos de cada ficha (+ fecha y correo de la última edición).
 - `portraits/{id}`: el retrato de cada ficha, comprimido a JPEG.
+- `players/{id}`: jugadores. Cada ficha guarda el enlace (`data.playerId`) y una copia del nombre (`data.player`).
+- `campaigns/{id}`: partidas, con sus jugadores y personajes (`members`).
+- `sessions/{id}`: sesiones de juego, con horarios y asistencia.
+
+Al entrar por primera vez con esta versión, el nombre de jugador que tuviera escrito cada ficha se convierte en un jugador y la ficha queda enlazada (no se borra nada; los nombres iguales sin distinguir mayúsculas se agrupan).
 
 Para entrar hay que **iniciar sesión con Google**, y solo pueden leer o escribir los correos autorizados en las reglas de Firestore. El código de la web es público, pero los datos no.
 
 - **Dar o quitar acceso:** consola de Firebase → Firestore Database → Reglas → edita la lista de correos (cuentas de Google, en minúsculas) → **Publicar**. No hace falta tocar el código.
-- **Copia de seguridad:** icono *Exportar todas*, que descarga un `.json` con todas las fichas y retratos. *Importar* las vuelve a subir.
+- **Copia de seguridad:** icono *Exportar todas* (vista Fichas), que descarga un `.json` con todas las fichas, retratos, jugadores, partidas y sesiones. *Importar* lo vuelve a subir como datos nuevos (los jugadores con el mismo nombre se reutilizan). Las copias antiguas, solo con fichas, siguen sirviendo.
 - **Fichas antiguas:** si un navegador tenía fichas de la versión anterior (guardadas en el navegador), aparece el botón *Subir a la nube N fichas de este navegador*.
 - El personaje de ejemplo (Jasper Stonehill) ya no está en el repositorio. Si hace falta, se importa con *Importar .json*.
 
@@ -85,7 +107,9 @@ y abre <http://localhost:8000>.
 ```
 index.html                 página
 style.css                  estilos (pantalla e impresión)
-app.js                     lógica: campos, Markdown, sesión, importar/exportar
+app.js                     lógica de las fichas: campos, Markdown, sesión, importar/exportar
+mesa.js                    jugadores, partidas, sesiones y vista de estadísticas
+stats.js                   cálculos (horas, asistencia, periodicidad) y gráficos
 store.js                   acceso a Firebase (login con Google y Firestore)
 firebase-config.js         configuración pública del proyecto Firebase
 manifest.webmanifest       nombre e iconos de la web (para instalarla como app)

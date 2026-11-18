@@ -2,7 +2,11 @@
  *
  *  - Cloud: Firestore (Firebase). Es el almacenamiento principal.
  *      characters/{id}  -> { data, created_at, updated_at, updated_by }
+ *                          data.player (nombre) y data.playerId (enlace a players)
  *      portraits/{id}   -> { img }   (retrato aparte para que la lista cargue rápido)
+ *      players/{id}     -> { name, contact, notes, active, ...meta }
+ *      campaigns/{id}   -> partidas: { name, status, members: [{playerId, characterId}], ... }
+ *      sessions/{id}    -> sesiones de juego: { campaignId, date, horarios, attendance, ... }
  *  - LocalStore: la base de datos antigua del navegador (IndexedDB). Solo se usa
  *    para subir a la nube las fichas que se crearon antes de usar Firebase.
  */
@@ -12,7 +16,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
 import {
-  getFirestore, collection, doc, getDoc, getDocs, writeBatch,
+  getFirestore, collection, doc, getDoc, getDocs, writeBatch, updateDoc,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
 
 const app = initializeApp(firebaseConfig);
@@ -71,7 +75,47 @@ export const Cloud = {
     b.delete(doc(db, PT, id));
     await b.commit();
   },
+  /** Enlaza una ficha con un jugador sin tocar el resto de sus datos. */
+  setPlayer(id, playerId, name) {
+    return updateDoc(doc(db, CH, id), {
+      'data.playerId': playerId || '', 'data.player': name || '', updated_at: now(), updated_by: who(),
+    });
+  },
 };
+
+/* ---------------- colecciones simples (jugadores, partidas, sesiones) ---------------- */
+function collectionStore(name) {
+  return {
+    async all() {
+      const snap = await getDocs(collection(db, name));
+      return snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    },
+    async create(obj) {
+      const ref = doc(collection(db, name));
+      const rec = { ...obj, created_at: now(), updated_at: now(), updated_by: who() };
+      const b = writeBatch(db);
+      b.set(ref, rec);
+      await b.commit();
+      return { ...rec, id: ref.id };
+    },
+    update(id, patch) {
+      const { id: _drop, ...rest } = patch;
+      return updateDoc(doc(db, name, id), { ...rest, updated_at: now(), updated_by: who() });
+    },
+    /** Borra varios documentos de una vez (lotes de 400). */
+    async removeMany(ids) {
+      for (let i = 0; i < ids.length; i += 400) {
+        const b = writeBatch(db);
+        for (const id of ids.slice(i, i + 400)) b.delete(doc(db, name, id));
+        await b.commit();
+      }
+    },
+    remove(id) { return this.removeMany([id]); },
+  };
+}
+export const Players = collectionStore('players');
+export const Campaigns = collectionStore('campaigns');
+export const Sessions = collectionStore('sessions');
 
 /* ---------------- IndexedDB antiguo (solo lectura, para migrar) ---------------- */
 export const LocalStore = {

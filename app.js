@@ -1,8 +1,10 @@
 /* Fichas de personaje · Old Gods of Appalachia
  * Web estática (GitHub Pages). Los datos se guardan en Firebase (Firestore)
  * y solo pueden verlos las cuentas de Google autorizadas en las reglas.
+ * Jugadores, partidas, sesiones y estadísticas están en mesa.js.
  */
 import { Cloud as Store, LocalStore, Auth } from './store.js';
+import * as Mesa from './mesa.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -15,7 +17,7 @@ const SKILL_ROWS = 12, ATTACK_ROWS = 7;
 function blank() {
   const stat = () => ({ pool: '', max: '', edge: '' });
   return {
-    name: '', player: '', descriptor: '', type: '', focus: '',
+    name: '', player: '', playerId: '', descriptor: '', type: '', focus: '',
     tier: '1', effort: '1', xp: '0',
     might: stat(), speed: stat(), intellect: stat(),
     adv: { capabilities: false, perfection: false, effort: false, skill: false, other: false },
@@ -532,7 +534,20 @@ function fill() {
     else if (s.k === 'md') renderBox(el, s);
     else if (s.k === 'portrait') showPortrait();
   }
-  $('#player').value = state.data.player || '';
+  fillPlayerSelect();
+}
+
+/** Desplegable de jugador de la ficha abierta (con opción de crear uno nuevo). */
+function fillPlayerSelect() {
+  const sel = $('#player');
+  const cur = Mesa.playerById(state.data.playerId) ? state.data.playerId : '';
+  const o = (v, t) => { const e = document.createElement('option'); e.value = v; e.textContent = t; return e; };
+  sel.replaceChildren(
+    o('', '— Sin jugador —'),
+    ...Mesa.cache.players.filter(p => p.active !== false || p.id === cur).map(p => o(p.id, p.name || 'Sin nombre')),
+    o('__new', '+ Nuevo jugador…'),
+  );
+  sel.value = cur;
 }
 
 let saveTimer = null, dirty = false;
@@ -578,6 +593,9 @@ async function open(id) {
   state.id = rec.id;
   state.data = normalize(rec.data);
   state.portrait = rec.portrait || null;
+  // la lista en memoria comparte los datos de la ficha abierta (para jugadores y partidas)
+  const cached = Mesa.cache.characters.find(c => c.id === rec.id);
+  if (cached) cached.data = state.data;
   fill();
   markActive();
   try { localStorage.setItem('ogoa-last', String(id)); } catch { /* sin almacenamiento */ }
@@ -589,6 +607,8 @@ async function open(id) {
 const subtitle = d => [d.player, [d.descriptor, d.type].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || 'sin definir';
 async function refreshList() {
   const recs = await Store.all();
+  for (const r of recs) if (r.id === state.id) r.data = state.data;
+  Mesa.cache.characters = recs;
   recs.sort((a, b) => (a.data.name || '').localeCompare(b.data.name || '', 'es', { sensitivity: 'base' }) || String(a.id).localeCompare(String(b.id)));
   const ul = $('#list');
   ul.innerHTML = '';
@@ -618,7 +638,7 @@ function updateListItem() {
 }
 
 /* ---- acciones ---- */
-async function createNew(data = blank(), portrait = null) {
+async function createNew(data = {}, portrait = null) {
   await save();
   const rec = await Store.create(normalize(data), portrait);
   await refreshList();
@@ -639,26 +659,36 @@ function download(name, obj) {
 const slug = s => (s || 'ficha').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'ficha';
 
 async function importFiles(files) {
-  let n = 0, firstId = null;
+  let n = 0, firstId = null, games = null;
   for (const f of files) {
     try {
       const json = JSON.parse(await f.text());
-      const items = Array.isArray(json) ? json : Array.isArray(json.characters) ? json.characters : [json];
+      const full = !Array.isArray(json) && (Array.isArray(json.characters) || Array.isArray(json.players));
+      const items = Array.isArray(json) ? json : full ? (json.characters || []) : [json];
+      // copia completa: primero jugadores, luego fichas, luego partidas y sesiones (con los ids nuevos)
+      const pMap = full && Array.isArray(json.players) ? await Mesa.restorePlayers(json) : new Map();
+      const charMap = new Map();
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
-        const data = it.data && typeof it.data === 'object' ? it.data : it;
+        const data = { ...(it.data && typeof it.data === 'object' ? it.data : it) };
+        if (data.playerId) data.playerId = pMap.get(data.playerId) || data.playerId;
         const rec = await Store.create(normalize(data), await shrinkPortrait(it.portrait || null));
+        if (it.id) charMap.set(it.id, rec.id);
         firstId ??= rec.id;
         n++;
       }
+      if (full && Array.isArray(json.campaigns)) games = await Mesa.restoreGames(json, pMap, charMap);
     } catch (e) {
-      status(`No se pudo importar ${f.name}: ${e.message}`, true);
+      status(`No se pudo importar ${f.name}: ${e.code || e.message}`, true);
     }
   }
-  if (n) {
+  if (n || games) {
     await refreshList();
-    await open(firstId);
-    status(`Importadas ${n} ficha${n > 1 ? 's' : ''}`);
+    if (await Mesa.migratePlayers()) await refreshList();
+    fillPlayerSelect();
+    if (firstId) await open(firstId);
+    Mesa.refreshCurrent();
+    status([`Importadas ${n} ficha${n === 1 ? '' : 's'}`, games && `${games.campaigns} partidas y ${games.sessions} sesiones`].filter(Boolean).join(', '));
   }
 }
 
@@ -680,7 +710,33 @@ async function init() {
   window.addEventListener('resize', applyZoom);
 
   $('#btn-new').addEventListener('click', () => createNew());
-  $('#player').addEventListener('input', e => { state.data.player = e.target.value; changed('player'); });
+  $('#player').addEventListener('change', async e => {
+    let id = e.target.value;
+    if (id === '__new') {
+      const name = prompt('Nombre del nuevo jugador:');
+      if (!name || !name.trim()) { fillPlayerSelect(); return; }
+      id = (await Mesa.createPlayer(name)).id;
+    }
+    const p = Mesa.playerById(id);
+    state.data.playerId = p?.id || '';
+    state.data.player = p?.name || '';
+    fillPlayerSelect();
+    changed('player');
+  });
+  Mesa.init({
+    status,
+    async openCharacter(id) { Mesa.showView('fichas'); await open(id); },
+    async newCharacter(data) { Mesa.showView('fichas'); await createNew(data); },
+    async playersChanged() {
+      // un jugador renombrado o borrado: la ficha abierta debe reflejarlo antes de guardarse
+      const p = Mesa.playerById(state.data.playerId);
+      if (state.data.playerId && !p) state.data.player = '';
+      state.data.playerId = p?.id || '';
+      if (p) state.data.player = p.name;
+      fillPlayerSelect();
+      await refreshList();
+    },
+  });
   $('#btn-dup').addEventListener('click', async () => {
     await save();
     const copy = structuredClone(state.data);
@@ -689,7 +745,9 @@ async function init() {
   });
   $('#btn-del').addEventListener('click', async () => {
     if (state.id == null) return;
-    if (!confirm(`¿Borrar la ficha "${state.data.name || 'Sin nombre'}"? No se puede deshacer.`)) return;
+    const used = Mesa.cache.sessions.filter(s => Object.values(s.attendance || {}).some(a => a.characterId === state.id)).length;
+    const warn = used ? `\n\nEste personaje aparece en ${used} sesión${used === 1 ? '' : 'es'}: allí se verá como "(ficha borrada)"; las estadísticas no cambian.` : '';
+    if (!confirm(`¿Borrar la ficha "${state.data.name || 'Sin nombre'}"? No se puede deshacer.${warn}`)) return;
     clearTimeout(saveTimer);
     dirty = false;
     await Store.remove(state.id);
@@ -704,13 +762,16 @@ async function init() {
   });
   $('#btn-export-all').addEventListener('click', async () => {
     await save();
+    await Mesa.flushAll();
     status('Preparando copia…');
     const recs = await Promise.all((await Store.all()).map(r => Store.get(r.id)));
+    await Mesa.load();
     status('Copia descargada');
     const stamp = new Date().toISOString().slice(0, 10);
     download(`fichas-ogoa-${stamp}.json`, {
-      app: 'ogoa-fichas', version: 1,
-      characters: recs.map(r => ({ data: r.data, portrait: r.portrait })),
+      app: 'ogoa-fichas', version: 2,
+      characters: recs.map(r => ({ id: r.id, data: r.data, portrait: r.portrait })),
+      ...Mesa.snapshot(),
     });
   });
   $('#btn-import').addEventListener('click', () => $('#import-file').click());
@@ -754,8 +815,10 @@ async function init() {
     if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; toggleMenu(false); }
   });
   window.addEventListener('beforeprint', () => { if (editor) closeEditor(); });
-  window.addEventListener('beforeunload', e => { if (dirty) { save(); e.preventDefault(); } });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
+  window.addEventListener('beforeunload', e => {
+    if (dirty || Mesa.hasPending()) { save(); Mesa.flushAll(); e.preventDefault(); }
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(); Mesa.flushAll(); } });
 
   // re-ajustar cuando terminen de cargar las fuentes web
   document.fonts?.ready.then(() => { if (state.id != null) fill(); });
@@ -769,7 +832,7 @@ async function init() {
     }
   });
   for (const id of ['#btn-logout', '#btn-switch']) {
-    $(id).addEventListener('click', async () => { await save(); await Auth.signOut(); location.reload(); });
+    $(id).addEventListener('click', async () => { await save(); await Mesa.flushAll(); await Auth.signOut(); location.reload(); });
   }
   $('#btn-migrate').addEventListener('click', migrateLocal);
 
@@ -806,10 +869,20 @@ async function startSession(user) {
   $('#login').hidden = true;
   $('#user-email').textContent = user.email;
 
-  let last = null;
-  try { last = localStorage.getItem('ogoa-last'); } catch { /* nada */ }
+  // jugadores, partidas y sesiones; las fichas antiguas con "Jugador" escrito a mano se enlazan solas
+  try {
+    await Mesa.load();
+    const linked = await Mesa.migratePlayers();
+    if (linked) recs = await refreshList();
+  } catch (e) {
+    status('No se pudieron cargar jugadores y partidas: ' + (e.code || e.message), true);
+  }
+
+  let last = null, view = location.hash.slice(1);
+  try { last = localStorage.getItem('ogoa-last'); view ||= localStorage.getItem('ogoa-view'); } catch { /* nada */ }
   if (!recs.length) await createNew();
   else await open(recs.some(r => r.id === last) ? last : recs[0].id);
+  Mesa.showView(view || 'fichas');
   checkLocal();
 }
 
