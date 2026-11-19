@@ -2,9 +2,8 @@
  * páginas A4 juntas, para doblar por la mitad como un cuadernillo.
  *   - Anverso: trasfondo, arcos y notas breves (izquierda); portada con retrato y
  *     nombre, descriptor, tipo y enfoque (derecha).
- *   - Reverso: grado, reservas, recuperación, daño y habilidades (izquierda); notas,
- *     habilidades especiales, ataques, cifrados, equipo y armadura (derecha).
- * No tiene casillas de avance (el dato se conserva en la ficha).
+ *   - Reverso: grado, reservas, avance, recuperación, daño, armadura, habilidades y
+ *     ataques (izquierda); habilidades especiales, notas, equipo y cifrados (derecha).
  * Posiciones medidas sobre la imagen; se pueden retocar desde la pestaña Layouts.
  */
 import { F, T } from './fields.js';
@@ -24,37 +23,44 @@ const front = [
 ];
 
 const back = [
-  F('text', 'tier', 92, 70, 170, 36, { fs: 28, cls: 'center' }),
-  F('text', 'effort', 307, 70, 170, 36, { fs: 28, cls: 'center' }),
-  F('text', 'xp', 522, 70, 136, 36, { fs: 28, cls: 'center' }),
+  F('text', 'tier', 89, 72, 104, 27, { fs: 24, cls: 'center' }),
+  F('text', 'effort', 231, 72, 104, 27, { fs: 24, cls: 'center' }),
+  F('text', 'xp', 374, 72, 85, 27, { fs: 24, cls: 'center' }),
 
   // Vigor / Velocidad / Intelecto: encima de "Reserva" la reserva actual; encima de
   // "Ventaja" la lista con el valor inicial y sus incrementos; bajo "Ventaja", la ventaja.
-  ...[['might', 45, 157, 266], ['speed', 267, 379, 487], ['intellect', 488, 600, 709]].flatMap(([k, l, m, r]) => [
-    F('text', `${k}.pool`, l + 4, 210, m - l - 8, 68, { fs: 36, cls: 'center', ph: '–', title: 'Reserva actual' }),
-    F('steps', `${k}.max`, m + 4, 208, r - m - 8, 70, { ph: 'inicial\n+…' }),
-    F('text', `${k}.edge`, m + 4, 309, r - m - 8, 31, { fs: 18, cls: 'center', ph: '–', title: 'Ventaja' }),
+  ...[['might', 41, 119, 194], ['speed', 195, 270, 344], ['intellect', 344, 418, 489]].flatMap(([k, l, m, r]) => [
+    F('text', `${k}.pool`, l + 3, 201, m - l - 6, 40, { fs: 30, cls: 'center', ph: '–', title: 'Reserva actual' }),
+    F('steps', `${k}.max`, m + 3, 199, r - m - 6, 42, { ph: 'inicial\n+…' }),
+    F('text', `${k}.edge`, m + 3, 267, r - m - 6, 32, { fs: 18, cls: 'center', ph: '–', title: 'Ventaja' }),
   ]),
 
-  F('text', 'recovery.bonus', 229, 452, 60, 50, { fs: 28, cls: 'center' }),
-  F('cb', 'recovery.action', 64, 521, 22, 22),
-  F('cb', 'recovery.hour', 237, 521, 22, 22),
-  F('cb', 'recovery.tenMin', 65, 558, 22, 22),
-  F('cb', 'recovery.tenHours', 237, 558, 22, 22),
-  F('cb', 'damage.impaired', 414, 436, 22, 22),
-  F('cb', 'damage.debilitated', 578, 436, 22, 22),
+  F('cb', 'adv.capabilities', 520, 82, 16, 16),
+  F('cb', 'adv.perfection', 520, 123, 16, 16),
+  F('cb', 'adv.effort', 520, 165, 16, 16),
+  F('cb', 'adv.skill', 520, 207, 16, 16),
+  F('cb', 'adv.other', 521, 251, 16, 16),
 
-  // Habilidades (10 filas, con columna de prueba) y ataques (5 filas)
-  T('skills', 43, 705, 672, 307, 10, [['name', 0.6101], ['test', 0.1548], ['t', 0.0804], ['s', 0.0774], ['i', 0.0773]]),
-  T('attacks', 766, 561, 396, 139, 5, [['name', 0.596], ['mod', 0.1717], ['damage', 0.2323]]),
+  F('text', 'recovery.bonus', 166, 403, 43, 38, { fs: 24, cls: 'center' }),
+  F('cb', 'recovery.action', 45, 457, 16, 16),
+  F('cb', 'recovery.hour', 163, 457, 16, 16),
+  F('cb', 'recovery.tenMin', 45, 486, 16, 16),
+  F('cb', 'recovery.tenHours', 163, 486, 16, 16),
+  F('cb', 'damage.impaired', 290, 387, 16, 16),
+  F('cb', 'damage.debilitated', 411, 387, 17, 16),
 
-  F('md', 'notes', 772, 72, 600, 196),
-  F('md', 'abilities', 776, 328, 678, 136),
-  F('md', 'cyphers', 1186, 522, 268, 128),
-  F('text', 'cypherLimit', 1379, 659, 66, 29, { fs: 20, cls: 'center' }),
-  F('md', 'equipment', 772, 752, 340, 258),
-  F('text', 'armor', 1247, 772, 108, 37, { fs: 24, cls: 'center' }),
-  F('md', 'armorDetails', 1148, 862, 304, 148),
+  F('text', 'armor', 622, 382, 48, 21, { fs: 16, cls: 'center' }),
+  F('md', 'armorDetails', 544, 452, 170, 68),
+
+  // Habilidades (13 filas, con columna de prueba) y ataques (13 filas)
+  T('skills', 41, 655, 326, 321, 13, [['name', 0.5399], ['test', 0.1227], ['t', 0.1166], ['s', 0.1104], ['i', 0.1104]]),
+  T('attacks', 405, 651, 311, 325, 13, [['name', 0.5756], ['mod', 0.2026], ['damage', 0.2218]]),
+
+  F('md', 'abilities', 775, 72, 400, 638),
+  F('md', 'notes', 1207, 152, 246, 558), // empieza bajo la pluma
+  F('md', 'equipment', 772, 775, 410, 208),
+  F('md', 'cyphers', 1212, 776, 244, 156),
+  F('text', 'cypherLimit', 1383, 940, 60, 25, { fs: 18, cls: 'center' }),
 ];
 
 export default {
