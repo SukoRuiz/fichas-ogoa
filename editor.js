@@ -189,6 +189,7 @@ export async function render() {
       <button type="button" class="btn" data-a="dup">Duplicar</button>
       <button type="button" class="btn" data-a="export" title="Descarga el layout con sus imágenes (.json)">Exportar</button>
       ${ed && l.custom ? '<button type="button" class="btn danger" data-a="delete">Borrar layout</button>' : ''}
+      ${l.modified ? '<button type="button" class="btn danger" data-a="revert" title="Descarta los cambios guardados en la web y vuelve al layout incluido en la aplicación">Volver al original</button>' : ''}
     </div>
     <div class="ly-pages">
       ${l.pages.map((p, i) => `<button type="button" class="ly-tab${i === ui.page ? ' on' : ''}" data-page="${i}">${esc(p.name || `Página ${i + 1}`)}</button>`).join('')}
@@ -265,6 +266,13 @@ async function action(a) {
       ctx.download(`layout-${(l.name || 'ficha').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_')}.json`,
         { app: 'ogoa-layout', version: 1, layout: { name: l.name, pages } });
       return ctx.status('Layout exportado');
+    }
+    if (a === 'revert') {
+      if (!confirm(`¿Descartar los cambios guardados de "${l.name}" y volver al layout original?`)) return;
+      await removeStored(l);
+      select(l.id);
+      ctx.status('Layout restaurado al original');
+      return render();
     }
     if (a === 'delete') {
       const uses = ctx.campaignsUsing(l.id);

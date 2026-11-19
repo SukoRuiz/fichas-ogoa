@@ -6,6 +6,10 @@
  *    incluido lo sustituye ("modificado"); al restaurarlo vuelve el original.
  *
  * El primero incluido es el de por defecto (partidas sin layout y fichas sin partida).
+ *
+ * Versiones: un incluido puede llevar `version` (número). Cada versión guardada recuerda
+ * sobre qué versión se hizo (`baseVersion`); si el código trae una versión más nueva
+ * (p. ej. al cambiar la plantilla y sus zonas), la guardada se ignora y se usa la del código.
  */
 import ogoaOficialEn from './ogoa-oficial-en.js';
 import periodicoEs from './periodico-es.js';
@@ -33,7 +37,7 @@ function fromDoc(d, base, stored) {
 /** Sustituye los layouts guardados por los de `docs` (los de Firestore). */
 export function setStored(docs) {
   const out = BUILTIN.map(b => {
-    const d = docs.find(x => x.id === b.id);
+    const d = docs.find(x => x.id === b.id && (x.baseVersion || 0) >= (b.version || 0));
     return d ? fromDoc(d, b, true) : fromDoc(b, b, false);
   });
   for (const d of docs) if (!builtinOf(d.id)) out.push(fromDoc(d, null, true));
@@ -44,6 +48,7 @@ export function setStored(docs) {
 export function toDoc(l) {
   return {
     name: l.name,
+    baseVersion: builtinOf(l.id)?.version || 0,
     pages: l.pages.map(p => ({
       id: p.id, name: p.name || '', width: p.width, height: p.height,
       orientation: p.orientation || '', image: !!p.image,

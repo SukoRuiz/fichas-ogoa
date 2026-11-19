@@ -31,7 +31,7 @@ Un layout es el diseño de la hoja: las imágenes de sus páginas (una o varias,
   - Sobre la imagen se **dibujan las zonas** arrastrando el ratón, y a cada una se le asigna un campo de la ficha. Las habilidades y los ataques son una sola zona de tabla con filas y columnas; las líneas verticales se arrastran para ajustar las columnas.
   - Clic en una zona para seleccionarla; se mueve arrastrándola y se cambia de tamaño con su esquina. Flechas: 1 px (Mayús: 10 px); Alt + flechas: tamaño; Supr: borrar.
   - El editor tiene dos modos. **Ver** (el de entrada) dibuja la página con los datos de la ficha que elijas, sin poder tocar nada. **Editar** permite cambiar páginas y zonas; solo se entra pulsándolo.
-  - Los cambios se guardan solos al momento (la línea de estado de la barra lateral lo indica). Un layout incluido que se edita se guarda como versión modificada, para todos.
+  - Los cambios se guardan solos al momento (la línea de estado de la barra lateral lo indica). Un layout incluido que se edita se guarda como versión modificada, para todos. **Volver al original** la descarta. Si una actualización de la web trae una versión nueva de ese layout (otra plantilla o zonas nuevas), la modificada anterior se ignora y se ve la nueva.
   - **Duplicar**, **Exportar** (un `.json` con imágenes y zonas) e **Importar** (icono de subida junto al +) sirven para copiar layouts o pasarlos a otra web.
 
 ### Jugadores, partidas y estadísticas
