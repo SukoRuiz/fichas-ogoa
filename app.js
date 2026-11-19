@@ -30,7 +30,7 @@ function blank() {
     skills: Array.from({ length: SKILL_ROWS }, () => ({ name: '', test: '', t: false, s: false, i: false })),
     attacks: Array.from({ length: ATTACK_ROWS }, () => ({ name: '', mod: '', damage: '' })),
     abilities: '', cyphers: '', cypherLimit: '', equipment: '', armorDetails: '', armor: '',
-    background: '', arcs: '', notes: '',
+    background: '', arcs: '', notes: '', shortNotes: '',
     portraitFit: 'cover', portraitPos: { x: 50, y: 50 },
   };
 }

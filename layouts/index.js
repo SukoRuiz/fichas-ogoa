@@ -9,8 +9,9 @@
  */
 import ogoaOficialEn from './ogoa-oficial-en.js';
 import periodicoEs from './periodico-es.js';
+import periodicoA3Es from './periodico-a3-es.js';
 
-export const BUILTIN = [ogoaOficialEn, periodicoEs];
+export const BUILTIN = [ogoaOficialEn, periodicoEs, periodicoA3Es];
 export const DEFAULT_LAYOUT = BUILTIN[0].id;
 
 /** Lista viva de layouts disponibles (incluidos + guardados). */

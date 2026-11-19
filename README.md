@@ -25,7 +25,7 @@ No necesita servidor ni instalación: son archivos estáticos (HTML + CSS + JS) 
 Un layout es el diseño de la hoja: las imágenes de sus páginas (una o varias, apaisadas o verticales) y dónde va cada dato. Todos los layouts comparten los datos de la ficha, así que la misma ficha se puede ver con cualquiera; lo que un layout no muestra se conserva.
 
 - **Qué layout se usa**: lo decide la partida en la que juega el personaje (no se elige en la ficha). Si está en varias, el de la partida activa con la sesión más reciente; si no está en ninguna, el primero (Oficial OGOA English).
-- **Incluidos**: *Oficial OGOA English* (2 páginas apaisadas) y *Periódico OGOA Español* (2 páginas verticales).
+- **Incluidos**: *Oficial OGOA English* (2 páginas apaisadas), *Periódico OGOA Español* (2 páginas verticales) y *Periódico A3 OGOA Español* (2 caras A3 apaisadas, cada una con dos páginas A4 para doblar como cuadernillo; tiene una caja extra de *Notas breves* y no tiene casillas de avance).
 - **Pestaña Layouts**:
   - **+** crea un layout nuevo. Con **+ Página** se sube la imagen de cada página (PNG o JPG; se comprime a JPEG para que quepa en la base de datos).
   - Sobre la imagen se **dibujan las zonas** arrastrando el ratón, y a cada una se le asigna un campo de la ficha. Las habilidades y los ataques son una sola zona de tabla con filas y columnas; las líneas verticales se arrastran para ajustar las columnas.
@@ -132,11 +132,13 @@ layouts/index.js           lista de layouts incluidos + los guardados en Firesto
 layouts/fields.js          catálogo de campos, tablas y formato de un layout
 layouts/ogoa-oficial-en.js layout "Oficial OGOA English"
 layouts/periodico-es.js    layout "Periódico OGOA Español"
+layouts/periodico-a3-es.js layout "Periódico A3 OGOA Español"
 store.js                   acceso a Firebase (login con Google y Firestore)
 firebase-config.js         configuración pública del proyecto Firebase
 manifest.webmanifest       nombre e iconos de la web (para instalarla como app)
 img/oficial-en-*.jpg       plantilla oficial en inglés (anverso y reverso)
 img/periodico-es-*.png     plantilla "periódico" en español (anverso y reverso)
+img/periodico-a3-es-*.png  plantilla "periódico" A3 en español (anverso y reverso)
 img/icon.svg               icono de la web (cabaña en las montañas bajo la luna)
 img/icon-*.png, img/apple-touch-icon.png   el mismo icono en PNG
 ```

@@ -64,6 +64,7 @@ export const CATALOG = [
     ['cypherLimit', 'Límite de cifrados', 'text', { fs: 20, cls: 'center' }], ['equipment', 'Equipo', 'md'],
     ['armorDetails', 'Detalles de armadura', 'md text'], ['armor', 'Armadura', 'text', { fs: 22, cls: 'center' }],
     ['background', 'Trasfondo', 'md'], ['arcs', 'Arcos del personaje', 'md'], ['notes', 'Notas', 'md'],
+    ['shortNotes', 'Notas breves', 'md'],
   ]),
   G('Tablas', [['skills', 'Tabla de habilidades', 'table'], ['attacks', 'Tabla de ataques', 'table']]),
   G('Imagen', [['portrait', 'Retrato', 'portrait']]),
