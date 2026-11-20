@@ -56,6 +56,7 @@ const back = [
 export default {
   id: 'ogoa-oficial-en',
   name: 'Oficial OGOA English',
+  size: 'A4', // papel al imprimir o exportar: A4, A3 o Letter
   pages: [
     { id: 'front', name: 'Anverso', width: 1200, height: 896, orientation: 'landscape', background: 'img/oficial-en-anverso.jpg', fields: front },
     { id: 'back', name: 'Reverso', width: 1200, height: 896, orientation: 'landscape', background: 'img/oficial-en-reverso.jpg', fields: back },

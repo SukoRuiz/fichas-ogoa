@@ -73,7 +73,7 @@ export function fitInput(el) {
   const cs = getComputedStyle(el);
   measureCtx.font = `${cs.fontWeight} ${base}px ${cs.fontFamily}`;
   const avail = el.offsetWidth - 6;
-  const w = measureCtx.measureText(el.value || '').width;
+  const w = measureCtx.measureText((el.value ?? el.textContent) || '').width;
   const fs = w > avail && w > 0 ? Math.max(8, base * avail / w) : base;
   el.style.fontSize = fs + 'px';
 }
@@ -109,44 +109,37 @@ export function applyPortraitFit(box, img, data) {
 /**
  * Dibuja una página de una ficha en solo lectura dentro de `host`
  * (mismo aspecto que en la vista Fichas, pero sin poder modificar nada).
+ * Solo usa elementos estáticos (sin inputs ni object-fit), así sirve igual para
+ * el modo Ver del editor, la impresión y la exportación a PDF o imagen.
+ * `host` debe estar ya en el documento para que se pueda ajustar la letra.
  */
 export function renderReadOnly(host, page, data, portrait) {
   const out = [];
   for (const s of expandFields(page.fields)) {
     const v = getPath(data, s.f);
-    let el;
+    const el = document.createElement('div');
     if (s.k === 'text') {
-      el = document.createElement('input');
-      el.type = 'text';
-      el.readOnly = true;
-      el.tabIndex = -1;
-      el.value = v ?? '';
+      el.className = 'tx';
       if (s.cls) el.classList.add(...s.cls.split(' '));
+      el.textContent = v ?? '';
       el.dataset.fs = s.fs || Math.min(s.h * 0.72, 30);
     } else if (s.k === 'steps') {
-      el = document.createElement('textarea');
-      el.className = 'steps';
-      el.readOnly = true;
-      el.tabIndex = -1;
-      el.wrap = 'off';
-      el.value = v ?? '';
+      el.className = 'steps-ro';
+      el.textContent = v ?? '';
     } else if (s.k === 'md') {
-      el = document.createElement('div');
       el.className = 'md';
       el.innerHTML = renderMD(v || '');
     } else if (s.k === 'cb' || s.k === 'dot') {
-      el = document.createElement('span');
-      el.className = 'cb' + (s.k === 'dot' ? ' dot' : '') + (v ? ' on' : '');
+      el.className = 'cbx' + (s.k === 'dot' ? ' dot' : '');
+      el.textContent = v ? (s.k === 'dot' ? '●' : '✕') : '';
     } else if (s.k === 'portrait') {
-      el = document.createElement('div');
-      el.className = 'portrait';
+      el.className = 'portrait-ro';
       if (portrait) {
-        const img = document.createElement('img');
-        img.alt = '';
-        img.src = portrait;
-        img.draggable = false;
-        el.appendChild(img);
-        applyPortraitFit(el, img, data);
+        const cover = data.portraitFit === 'cover';
+        const p = data.portraitPos || { x: 50, y: 50 };
+        el.style.backgroundImage = `url("${portrait}")`;
+        el.style.backgroundSize = cover ? 'cover' : 'contain';
+        el.style.backgroundPosition = cover ? `${p.x}% ${p.y}%` : '50% 50%';
       }
     } else continue;
     place(el, s);

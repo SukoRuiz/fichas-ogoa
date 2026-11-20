@@ -57,6 +57,7 @@ const back = [
 export default {
   id: 'periodico-es',
   name: 'Periódico OGOA Español',
+  size: 'A4', // papel al imprimir o exportar: A4, A3 o Letter
   pages: [
     { id: 'front', name: 'Hoja de personaje', width: 1055, height: 1491, orientation: 'portrait', background: 'img/periodico-es-anverso.png', fields: front },
     { id: 'back', name: 'Página de trasfondo', width: 1055, height: 1491, orientation: 'portrait', background: 'img/periodico-es-reverso.png', fields: back },

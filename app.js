@@ -1,17 +1,25 @@
 /* Fichas de personaje · Old Gods of Appalachia
  * Web estática (GitHub Pages). Los datos se guardan en Firebase (Firestore)
  * y solo pueden verlos las cuentas de Google autorizadas en las reglas.
- * Jugadores, partidas, sesiones y estadísticas están en mesa.js.
+ * Jugadores, partidas, sesiones y estadísticas están en mesa.js; imprimir y
+ * exportar a PDF o imagen, en export.js.
+ *
+ * Las fichas se abren siempre desde un jugador, una partida o la lista de fichas
+ * sin jugador, y el visor solo muestra las fichas de ese contexto. Crear, importar,
+ * exportar, imprimir o asignar fichas se hace desde Jugadores y Partidas.
  */
 import { Cloud as Store, LocalStore, Auth } from './store.js';
 import * as Mesa from './mesa.js';
-import { DEFAULT_LAYOUT, getLayout, orientationOf } from './layouts/index.js';
+import * as Export from './export.js';
+import { DEFAULT_LAYOUT, getLayout, orientationOf, paperOf, paperMM } from './layouts/index.js';
 import { expandFields } from './layouts/fields.js';
 import * as Editor from './editor.js';
 import { renderMD, fitInput, fitBox, getPath, place, applyPortraitFit } from './sheet.js';
+import { esc, decider, saveBlob, slug } from './ui.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const norm = s => (s || '').trim().toLocaleLowerCase('es').normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 /* =====================================================================
  * Modelo de datos
@@ -74,7 +82,7 @@ const MD_EXAMPLES = [
 /* =====================================================================
  * Construcción de la interfaz
  * ===================================================================== */
-const state = { id: null, data: blank(), portrait: null };
+const state = { id: null, data: blank(), portrait: null, vctx: null }; // vctx: contexto del visor (ver más abajo)
 const fields = []; // {spec, el} del layout que se está mostrando
 let layout = null;  // layout mostrado (ver layouts/)
 let builtRev = -1;  // versión del layout cuando se construyeron las hojas (el editor la sube)
@@ -371,14 +379,12 @@ function fill() {
     else if (s.k === 'md') renderBox(el, s);
     else if (s.k === 'portrait') showPortrait();
   }
-  fillPlayerSelect();
 }
 
 /* =====================================================================
  * Layouts: qué hojas se muestran y dónde va cada campo
  * ===================================================================== */
-// Caja imprimible (px a 96 ppp) común a A4 y Carta con márgenes de 5 mm
-const PRINT_BOX = { landscape: [1008, 753], portrait: [756, 1015] };
+const PX_PER_MM = 96 / 25.4;
 
 function buildLayout(l) {
   if (editor) closeEditor();
@@ -391,12 +397,13 @@ function buildLayout(l) {
   for (const pg of l.pages) {
     const o = orientationOf(pg);
     const sheet = document.createElement('div');
-    sheet.className = `sheet ${o}`;
+    sheet.className = `sheet ${o} pg-${paperOf(l)}-${o}`;
     sheet.dataset.page = pg.id;
     sheet.style.width = pg.width + 'px';
     sheet.style.height = pg.height + 'px';
-    const [pw, ph] = PRINT_BOX[o];
-    sheet.style.setProperty('--pz', Math.min(pw / pg.width, ph / pg.height).toFixed(4));
+    // Ctrl+P en el visor: cada cara ocupa su papel entero (sin margen)
+    const [wmm, hmm] = paperMM(l, pg);
+    sheet.style.setProperty('--pz', Math.min(wmm * PX_PER_MM / pg.width, hmm * PX_PER_MM / pg.height).toFixed(4));
     if (pg.paper) sheet.style.background = pg.paper;
     if (pg.background) {
       const img = document.createElement('img');
@@ -408,30 +415,22 @@ function buildLayout(l) {
     build(sheet, expandFields(pg.fields));
     host.appendChild(sheet);
   }
-  buildPrintMenu();
   applyZoom();
 }
 
-/** El layout de la ficha abierta lo decide su partida (o el de por defecto si no tiene). */
+/** Layout de una ficha: desde una partida, el de esa partida; si no, el de su partida principal. */
+function layoutIdFor(id, vc = state.vctx) {
+  const c = vc?.type === 'campaign' ? Mesa.campaignById(vc.id) : null;
+  if (c && getLayout(c.layoutId) && c.members.some(m => m.characterId === id)) return c.layoutId;
+  return Mesa.layoutForCharacter(id).layoutId;
+}
+
 async function applyLayout() {
-  const l = getLayout(Mesa.layoutForCharacter(state.id).layoutId) || getLayout(DEFAULT_LAYOUT);
+  const l = getLayout(layoutIdFor(state.id)) || getLayout(DEFAULT_LAYOUT);
   if (l !== layout || l._rev !== builtRev) {
     try { await Editor.ensureImages(l); } catch (e) { status('No se pudo cargar la imagen del layout: ' + (e.code || e.message), true); }
     buildLayout(l);
   }
-}
-
-/** Desplegable de jugador de la ficha abierta (con opción de crear uno nuevo). */
-function fillPlayerSelect() {
-  const sel = $('#player');
-  const cur = Mesa.playerById(state.data.playerId) ? state.data.playerId : '';
-  const o = (v, t) => { const e = document.createElement('option'); e.value = v; e.textContent = t; return e; };
-  sel.replaceChildren(
-    o('', '— Sin jugador —'),
-    ...Mesa.cache.players.filter(p => p.active !== false || p.id === cur).map(p => o(p.id, p.name || 'Sin nombre')),
-    o('__new', '+ Nuevo jugador…'),
-  );
-  sel.value = cur;
 }
 
 let saveTimer = null, dirty = false;
@@ -440,7 +439,7 @@ function changed(path) {
   status('Cambios sin guardar…');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(save, 1500);
-  if (['name', 'player', 'descriptor', 'type', 'focus'].includes(path)) updateListItem();
+  if (['name', 'descriptor', 'type', 'focus'].includes(path)) updateListItem();
 }
 async function save() {
   clearTimeout(saveTimer);
@@ -468,47 +467,105 @@ function status(msg, err = false) {
   s.classList.toggle('err', err);
 }
 
-async function open(id) {
+/* =====================================================================
+ * Visor de fichas: siempre dentro de un contexto
+ *   { type: 'player', id }   las fichas de un jugador
+ *   { type: 'campaign', id } las fichas de los jugadores de una partida
+ *   { type: 'unassigned' }   las fichas sin jugador
+ * ===================================================================== */
+const charById = id => Mesa.cache.characters.find(c => c.id === id) || null;
+const byCharName = (a, b) => (a.data.name || '').localeCompare(b.data.name || '', 'es', { sensitivity: 'base' }) || String(a.id).localeCompare(String(b.id));
+const describe = d => [d.descriptor, d.type, d.focus].filter(Boolean).join(' · ');
+
+/** Contexto natural de una ficha: su jugador, o "sin jugador". */
+function homeContext(id) {
+  const pid = charById(id)?.data.playerId;
+  return Mesa.playerById(pid) ? { type: 'player', id: pid } : { type: 'unassigned' };
+}
+function validContext(vc) {
+  if (!vc) return false;
+  if (vc.type === 'player') return !!Mesa.playerById(vc.id);
+  if (vc.type === 'campaign') return !!Mesa.campaignById(vc.id);
+  return vc.type === 'unassigned';
+}
+/** Fichas de un contexto, en el orden en que se listan. */
+function contextChars(vc) {
+  const all = Mesa.cache.characters;
+  if (vc?.type === 'player') return all.filter(c => c.data.playerId === vc.id).sort(byCharName);
+  if (vc?.type === 'campaign') {
+    const c = Mesa.campaignById(vc.id);
+    const ids = [...new Set((c?.members || []).map(m => m.characterId).filter(Boolean))];
+    return ids.map(charById).filter(Boolean);
+  }
+  if (vc?.type === 'unassigned') return all.filter(c => !Mesa.playerById(c.data.playerId)).sort(byCharName);
+  return [];
+}
+function contextLabel(vc) {
+  if (vc?.type === 'player') { const n = Mesa.playerById(vc.id)?.name || 'Sin nombre'; return { back: n, title: `Fichas de ${n}` }; }
+  if (vc?.type === 'campaign') { const n = Mesa.campaignById(vc.id)?.name || 'Sin nombre'; return { back: n, title: `Fichas de la partida` }; }
+  return { back: 'Fichas sin jugador', title: 'Fichas sin jugador' };
+}
+function subtitle(c, vc = state.vctx) {
+  const d = c.data;
+  if (vc?.type === 'campaign') return [Mesa.playerById(d.playerId)?.name, [d.descriptor, d.type].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || 'sin definir';
+  return describe(d) || 'sin definir';
+}
+
+async function open(id, vc = null) {
   await save();
   if (editor) closeEditor();
   status('Abriendo…');
   const rec = await Store.get(id);
-  if (!rec) { status('La ficha ya no existe', true); await refreshList(); return; }
+  if (!rec) { status('La ficha ya no existe', true); await loadCharacters(); Mesa.refresh(); return false; }
   state.id = rec.id;
   state.data = normalize(rec.data);
   state.portrait = rec.portrait || null;
   // la lista en memoria comparte los datos de la ficha abierta (para jugadores y partidas)
-  const cached = Mesa.cache.characters.find(c => c.id === rec.id);
+  const cached = charById(rec.id);
   if (cached) cached.data = state.data;
+  else Mesa.cache.characters.push({ id: rec.id, data: state.data });
+  const inCtx = c => validContext(c) && contextChars(c).some(x => x.id === rec.id);
+  if (vc && inCtx(vc)) state.vctx = vc;
+  else if (!inCtx(state.vctx)) state.vctx = homeContext(rec.id);
   await applyLayout();
   fill();
-  markActive();
-  try { localStorage.setItem('ogoa-last', String(id)); } catch { /* sin almacenamiento */ }
+  renderList();
+  try {
+    localStorage.setItem('ogoa-last', String(id));
+    localStorage.setItem('ogoa-ctx', JSON.stringify(state.vctx));
+  } catch { /* sin almacenamiento */ }
   status('Abierta');
+  return true;
 }
 
-/* ---- lista lateral ---- */
-const subtitle = d => [d.player, [d.descriptor, d.type].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || 'sin definir';
-async function refreshList() {
+/** Recarga de Firestore la lista de fichas (sin retratos). */
+async function loadCharacters() {
   const recs = await Store.all();
   for (const r of recs) if (r.id === state.id) r.data = state.data;
   Mesa.cache.characters = recs;
-  recs.sort((a, b) => (a.data.name || '').localeCompare(b.data.name || '', 'es', { sensitivity: 'base' }) || String(a.id).localeCompare(String(b.id)));
+  return recs;
+}
+
+function renderList() {
+  const vc = state.vctx;
+  const lbl = contextLabel(vc);
+  $('#btn-back').textContent = '← ' + lbl.back;
+  $('#btn-back').title = vc?.type === 'campaign' ? 'Volver a la partida' : vc?.type === 'player' ? 'Volver al jugador' : 'Volver a las fichas sin jugador';
+  $('#ctx-title').textContent = lbl.title;
   const ul = $('#list');
   ul.innerHTML = '';
-  for (const r of recs) {
+  const list = contextChars(vc);
+  for (const r of list) {
     const li = document.createElement('li');
     li.dataset.id = r.id;
     li.innerHTML = '<span class="n"></span><span class="d"></span>';
     $('.n', li).textContent = r.data.name || 'Sin nombre';
-    $('.d', li).textContent = subtitle(r.data);
+    $('.d', li).textContent = subtitle(r);
     li.addEventListener('click', () => open(r.id));
     ul.appendChild(li);
   }
+  if (!list.length) ul.innerHTML = '<li class="empty">No hay fichas aquí.</li>';
   markActive();
-  const has = recs.length > 0;
-  for (const b of ['#btn-dup', '#btn-del', '#btn-export', '#btn-print']) $(b).disabled = !has;
-  return recs;
 }
 function markActive() {
   $$('#list li').forEach(li => li.classList.toggle('active', li.dataset.id === state.id));
@@ -517,63 +574,237 @@ function updateListItem() {
   const li = $(`#list li[data-id="${state.id}"]`);
   if (!li) return;
   $('.n', li).textContent = state.data.name || 'Sin nombre';
-  $('.d', li).textContent = subtitle(state.data);
+  $('.d', li).textContent = subtitle({ data: state.data });
 }
 
-/* ---- acciones ---- */
-async function createNew(data = {}, portrait = null) {
+async function openCharacter(id, vc = null) {
+  if (!(await open(id, vc))) return;
+  Mesa.showView('fichas');
+}
+function backToContext() {
+  const vc = state.vctx;
+  if (vc?.type === 'campaign') Mesa.showCampaign(vc.id);
+  else if (vc?.type === 'player') Mesa.showPlayer(vc.id);
+  else Mesa.showUnassigned();
+}
+
+/* =====================================================================
+ * Acciones sobre fichas (se usan desde Jugadores y Partidas)
+ * ===================================================================== */
+const loadRec = async id => (id === state.id ? { id, data: state.data, portrait: state.portrait } : Store.get(id));
+
+/** Crea una ficha para un jugador (o sin jugador). Opcional: la asigna a la partida y la abre. */
+async function createCharacter(playerId = '', { campaignId = '', openIt = true } = {}) {
   await save();
-  const rec = await Store.create(normalize(data), portrait);
-  await refreshList();
-  await open(rec.id);
+  const p = Mesa.playerById(playerId);
+  const rec = await Store.create(normalize({ playerId: p?.id || '', player: p?.name || '' }));
+  Mesa.cache.characters.push({ id: rec.id, data: rec.data });
+  if (campaignId) Mesa.linkCharacters(campaignId, [rec.id]);
+  else if (p) Mesa.fillEmptySlots(p.id);
+  if (openIt) await openCharacter(rec.id, campaignId ? { type: 'campaign', id: campaignId } : null);
+  else Mesa.refresh();
   return rec;
 }
 
-function download(name, obj) {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+async function duplicateCharacter(id) {
+  await save();
+  const rec = await loadRec(id);
+  if (!rec) return;
+  const copy = structuredClone(rec.data);
+  copy.name = (copy.name || 'Sin nombre') + ' (copia)';
+  const n = await Store.create(normalize(copy), rec.portrait || null);
+  Mesa.cache.characters.push({ id: n.id, data: n.data });
+  Mesa.refresh();
+  status(`Ficha duplicada: ${copy.name}`);
 }
-const slug = s => (s || 'ficha').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_').replace(/^_+|_+$/g, '') || 'ficha';
 
-async function importFiles(files) {
-  let n = 0, firstId = null, games = null;
+async function deleteCharacter(id) {
+  const c = charById(id);
+  if (!c) return;
+  const used = Mesa.cache.sessions.filter(s => Object.values(s.attendance || {}).some(a => a.characterId === id)).length;
+  const warn = used ? `\n\nEste personaje aparece en ${used} sesión${used === 1 ? '' : 'es'}: allí se verá como "(ficha borrada)"; las estadísticas no cambian.` : '';
+  if (!confirm(`¿Borrar la ficha "${c.data.name || 'Sin nombre'}"? No se puede deshacer.${warn}`)) return;
+  if (id === state.id) { clearTimeout(saveTimer); dirty = false; }
+  await Store.remove(id);
+  Mesa.cache.characters = Mesa.cache.characters.filter(x => x.id !== id);
+  if (id === state.id) { state.id = null; state.data = blank(); state.portrait = null; }
+  Mesa.refresh();
+  status('Ficha borrada');
+}
+
+/** Descarga fichas en .json: una sola en el formato de siempre, varias juntas en un archivo. */
+async function exportCharacters(ids, base = 'fichas') {
+  if (!ids.length) return;
+  await save();
+  status('Preparando…');
+  const recs = (await Promise.all(ids.map(loadRec))).filter(Boolean);
+  if (recs.length === 1) {
+    const r = recs[0];
+    download(`${slug(r.data.name)}.json`, { app: 'ogoa-fichas', version: 1, id: r.id, data: r.data, portrait: r.portrait || null });
+  } else {
+    download(`${slug(base)}.json`, { app: 'ogoa-fichas', version: 1, characters: recs.map(r => ({ id: r.id, data: r.data, portrait: r.portrait || null })) });
+  }
+  status(`Exportada${recs.length === 1 ? '' : 's'} ${recs.length} ficha${recs.length === 1 ? '' : 's'}`);
+}
+
+/** Abre la ventana de imprimir / PDF / imagen con estas fichas. */
+function printCharacters(ids, { title = 'Fichas', file = 'fichas', campaignId = '' } = {}) {
+  const vc = campaignId ? { type: 'campaign', id: campaignId } : null;
+  Export.open({
+    title, file,
+    items: ids.map(charById).filter(Boolean).map(c => ({
+      id: c.id, name: c.data.name || 'Sin nombre',
+      sub: [Mesa.playerById(c.data.playerId)?.name, describe(c.data)].filter(Boolean).join(' · '),
+      layoutId: layoutIdFor(c.id, vc),
+    })),
+  });
+}
+
+function download(name, obj) {
+  saveBlob(name, new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
+}
+
+/* ---------------- importar ---------------- */
+let importTarget = null; // dónde van las fichas importadas: { type, id } o null (copia completa)
+function chooseImport(target) {
+  importTarget = target;
+  $('#import-file').click();
+}
+
+/** Jugador de una ficha importada: el del contexto, el de la copia o uno con el mismo nombre. */
+function resolvePlayer(data, pMap, target) {
+  if (target?.type === 'player' && Mesa.playerById(target.id)) {
+    data.playerId = target.id;
+    data.player = Mesa.playerById(target.id).name;
+    return;
+  }
+  if (target?.type === 'unassigned') { data.playerId = ''; data.player = ''; return; }
+  let pid = pMap.get(data.playerId) || (Mesa.playerById(data.playerId) ? data.playerId : '');
+  if (!pid && data.player) pid = Mesa.playerByName(data.player)?.id || '';
+  if (pid) { data.playerId = pid; data.player = Mesa.playerById(pid).name; }
+  else data.playerId = ''; // si trae nombre de jugador, migratePlayers lo crea y la enlaza
+}
+
+/** Ficha que ya existe: la misma (por id) o una con el mismo nombre y el mismo jugador. */
+function findExisting(it, data) {
+  const byId = it.id && charById(it.id);
+  if (byId) return byId;
+  const key = norm(data.name);
+  if (!key) return null;
+  const samePlayer = d => (d.playerId || data.playerId ? d.playerId === data.playerId : norm(d.player) === norm(data.player));
+  return Mesa.cache.characters.find(c => norm(c.data.name) === key && samePlayer(c.data)) || null;
+}
+
+async function overwriteCharacter(existing, data, portrait) {
+  if (!data.playerId && existing.data.playerId) { data.playerId = existing.data.playerId; data.player = existing.data.player; }
+  const nd = normalize(data);
+  const isOpen = existing.id === state.id;
+  if (isOpen) { clearTimeout(saveTimer); dirty = false; if (editor) closeEditor(); }
+  // sin retrato en el archivo: se conserva el que ya tenía
+  await Store.update(existing.id, portrait ? { data: nd, portrait } : { data: nd });
+  if (isOpen) {
+    state.data = nd;
+    if (portrait) state.portrait = portrait;
+    if (Mesa.currentView() === 'fichas') { await applyLayout(); fill(); }
+  }
+  existing.data = nd;
+}
+
+async function importFiles(files, target = null) {
+  await save();
+  const decide = decider();
+  const res = { created: 0, overwritten: 0, skipped: 0, ids: [], layouts: 0, games: null };
   for (const f of files) {
     try {
       const json = JSON.parse(await f.text());
-      const full = !Array.isArray(json) && (Array.isArray(json.characters) || Array.isArray(json.players));
-      const items = Array.isArray(json) ? json : full ? (json.characters || []) : [json];
-      // copia completa: primero jugadores, luego fichas, luego partidas y sesiones (con los ids nuevos)
+      // un layout exportado
+      if (json && !Array.isArray(json) && (json.app === 'ogoa-layout' || Array.isArray(json.layout?.pages))) {
+        if (await Editor.importLayout(json, decide)) res.layouts++;
+        continue;
+      }
+      const full = !Array.isArray(json) && (Array.isArray(json.players) || Array.isArray(json.campaigns));
+      const items = Array.isArray(json) ? json : Array.isArray(json.characters) ? json.characters : [json];
+      const many = items.length > 1 || files.length > 1;
+      // copia completa: primero jugadores, luego fichas, luego layouts, partidas y sesiones
       const pMap = full && Array.isArray(json.players) ? await Mesa.restorePlayers(json) : new Map();
       const charMap = new Map();
       for (const it of items) {
         if (!it || typeof it !== 'object') continue;
-        const data = { ...(it.data && typeof it.data === 'object' ? it.data : it) };
-        if (data.playerId) data.playerId = pMap.get(data.playerId) || data.playerId;
-        const rec = await Store.create(normalize(data), await shrinkPortrait(it.portrait || null));
-        if (it.id) charMap.set(it.id, rec.id);
-        firstId ??= rec.id;
-        n++;
+        const src = it.data && typeof it.data === 'object' ? it.data : it;
+        const { app, version, id: _id, portrait: _p, ...data } = { ...src };
+        resolvePlayer(data, pMap, target);
+        const portrait = await shrinkPortrait(it.portrait || null);
+        const existing = findExisting(it, data);
+        let id, choice = 'new';
+        if (existing) {
+          const who = Mesa.playerById(existing.data.playerId)?.name;
+          choice = await decide('ficha', {
+            title: 'Esa ficha ya existe',
+            html: `<p>Ya hay una ficha <b>${esc(existing.data.name || 'Sin nombre')}</b>${who ? ` de <b>${esc(who)}</b>` : ' sin jugador'}${describe(existing.data) ? ` <span class="muted">(${esc(describe(existing.data))})</span>` : ''}.</p>
+              <p>¿Sobrescribir sus datos con los del archivo, crear otra ficha nueva o dejarla como está?</p>`,
+            buttons: [{ v: 'overwrite', label: 'Sobrescribir', primary: true }, { v: 'new', label: 'Crear otra' }, { v: 'skip', label: 'Omitir' }],
+            cancel: 'skip',
+            remember: many ? 'Hacer lo mismo con las demás fichas que ya existan' : '',
+          });
+        }
+        if (choice === 'skip') { id = existing.id; res.skipped++; }
+        else if (choice === 'overwrite') { await overwriteCharacter(existing, data, portrait); id = existing.id; res.overwritten++; res.ids.push(id); }
+        else {
+          const rec = await Store.create(normalize(data), portrait);
+          Mesa.cache.characters.push({ id: rec.id, data: rec.data });
+          id = rec.id;
+          res.created++;
+          res.ids.push(id);
+        }
+        if (it.id) charMap.set(it.id, id);
       }
-      if (full && Array.isArray(json.layouts)) await Editor.restore(json.layouts);
-      if (full && Array.isArray(json.campaigns)) games = await Mesa.restoreGames(json, pMap, charMap);
+      if (full && Array.isArray(json.layouts)) res.layouts += await Editor.restore(json.layouts, decide);
+      if (full && Array.isArray(json.campaigns)) {
+        const g = await Mesa.restoreGames(json, pMap, charMap, decide);
+        res.games = res.games ? { campaigns: res.games.campaigns + g.campaigns, sessions: res.games.sessions + g.sessions } : g;
+      }
     } catch (e) {
       status(`No se pudo importar ${f.name}: ${e.code || e.message}`, true);
     }
   }
-  if (n || games) {
-    await refreshList();
-    if (await Mesa.migratePlayers()) await refreshList();
-    fillPlayerSelect();
-    if (firstId) await open(firstId);
-    Mesa.refreshCurrent();
-    status([`Importadas ${n} ficha${n === 1 ? '' : 's'}`, games && `${games.campaigns} partidas y ${games.sessions} sesiones`].filter(Boolean).join(', '));
+  if (!res.created && !res.overwritten && !res.skipped && !res.layouts && !res.games) return;
+  await loadCharacters();
+  if (await Mesa.migratePlayers()) await loadCharacters();
+  for (const pid of new Set(res.ids.map(id => charById(id)?.data.playerId).filter(Boolean))) Mesa.fillEmptySlots(pid);
+  let note = '';
+  if (target?.type === 'campaign' && res.ids.length) {
+    const { unlinked } = Mesa.linkCharacters(target.id, res.ids);
+    if (unlinked) note = ` · ${unlinked} sin asignar en la partida (asígnalas en su pestaña Jugadores)`;
   }
+  Mesa.refresh();
+  if (Mesa.currentView() === 'fichas') renderList();
+  const parts = [
+    res.created && `${res.created} ficha${res.created === 1 ? '' : 's'} nueva${res.created === 1 ? '' : 's'}`,
+    res.overwritten && `${res.overwritten} sobrescrita${res.overwritten === 1 ? '' : 's'}`,
+    res.skipped && `${res.skipped} omitida${res.skipped === 1 ? '' : 's'}`,
+    res.layouts && `${res.layouts} layout${res.layouts === 1 ? '' : 's'}`,
+    res.games && `${res.games.campaigns} partidas y ${res.games.sessions} sesiones`,
+  ].filter(Boolean);
+  status('Importado: ' + (parts.join(', ') || 'nada') + note);
+}
+
+/* ---- copia de seguridad completa ---- */
+async function exportBackup() {
+  await save();
+  await Mesa.flushAll();
+  status('Preparando copia…');
+  const recs = await Promise.all((await Store.all()).map(r => Store.get(r.id)));
+  await Mesa.load();
+  await Editor.flush();
+  const layouts = await Editor.snapshot();
+  status('Copia descargada');
+  const stamp = new Date().toISOString().slice(0, 10);
+  download(`fichas-ogoa-${stamp}.json`, {
+    app: 'ogoa-fichas', version: 2,
+    characters: recs.map(r => ({ id: r.id, data: r.data, portrait: r.portrait })),
+    ...Mesa.snapshot(),
+    layouts,
+  });
 }
 
 /* ---- escalado en pantalla ---- */
@@ -581,32 +812,6 @@ function applyZoom() {
   const avail = $('#main').clientWidth - 48;
   for (const s of $$('#sheets .sheet')) {
     s.style.zoom = Math.max(0.35, Math.min(1.35, avail / parseFloat(s.style.width)));
-  }
-}
-
-/* ---- imprimir: todas las páginas o una sola ---- */
-let printSel = 'all';
-function buildPrintMenu() {
-  const m = $('#print-menu');
-  m.replaceChildren();
-  const add = (v, t) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.dataset.print = v;
-    b.textContent = t;
-    m.appendChild(b);
-  };
-  const n = layout.pages.length;
-  add('all', n === 1 ? 'Imprimir' : n === 2 ? 'Ambas caras' : `Todas las páginas (${n})`);
-  if (n > 1) for (const p of layout.pages) add(p.id, `Solo ${p.name.toLowerCase()}`);
-}
-function markPrint() {
-  let first = true;
-  for (const s of $$('#sheets .sheet')) {
-    const skip = printSel !== 'all' && s.dataset.page !== printSel;
-    s.classList.toggle('skip-print', skip);
-    s.classList.toggle('first-print', !skip && first);
-    if (!skip) first = false;
   }
 }
 
@@ -622,32 +827,28 @@ async function init() {
     // fichas para el modo "Ver" del editor
     characters: () => Mesa.cache.characters,
     currentCharacter: () => state.id,
-    loadCharacter: id => (id === state.id ? { id, data: state.data, portrait: state.portrait } : Store.get(id)),
+    loadCharacter: id => loadRec(id),
+    openCharacter: id => openCharacter(id),
+    playerName: id => Mesa.playerById(id)?.name || '',
   });
+  Export.init({ status, load: loadRec, flush: save });
   const pfile = $('#portrait-file');
   pfile.addEventListener('change', () => { if (pfile.files[0]) loadPortrait(pfile.files[0]); pfile.value = ''; });
   window.addEventListener('resize', applyZoom);
 
-  $('#btn-new').addEventListener('click', () => createNew());
-  $('#player').addEventListener('change', async e => {
-    let id = e.target.value;
-    if (id === '__new') {
-      const name = prompt('Nombre del nuevo jugador:');
-      if (!name || !name.trim()) { fillPlayerSelect(); return; }
-      id = (await Mesa.createPlayer(name)).id;
-    }
-    const p = Mesa.playerById(id);
-    state.data.playerId = p?.id || '';
-    state.data.player = p?.name || '';
-    fillPlayerSelect();
-    changed('player');
-  });
   Mesa.init({
     status,
-    async openCharacter(id) { Mesa.showView('fichas'); await open(id); },
-    async newCharacter(data) { Mesa.showView('fichas'); await createNew(data); },
-    // al volver a las fichas: la partida puede haber cambiado de layout
-    async onEnterFichas() { if (state.id != null) { await applyLayout(); fill(); } },
+    openCharacter,
+    hasOpenCharacter: () => state.id != null && !!charById(state.id),
+    fichasTab: () => (state.vctx?.type === 'campaign' ? 'partidas' : 'jugadores'),
+    // al volver al visor: la partida puede haber cambiado de layout o la ficha de contexto
+    async onEnterFichas() {
+      if (state.id == null) return;
+      if (!validContext(state.vctx)) state.vctx = homeContext(state.id);
+      await applyLayout();
+      fill();
+      renderList();
+    },
     renderLayouts: () => Editor.render(),
     async playersChanged() {
       // un jugador renombrado o borrado: la ficha abierta debe reflejarlo antes de guardarse
@@ -655,74 +856,27 @@ async function init() {
       if (state.data.playerId && !p) state.data.player = '';
       state.data.playerId = p?.id || '';
       if (p) state.data.player = p.name;
-      fillPlayerSelect();
-      await refreshList();
+      await loadCharacters();
+    },
+    fichas: {
+      create: createCharacter,
+      duplicate: duplicateCharacter,
+      remove: deleteCharacter,
+      export: exportCharacters,
+      print: printCharacters,
+      import: chooseImport,
+      flush: save,
     },
   });
-  $('#btn-dup').addEventListener('click', async () => {
-    await save();
-    const copy = structuredClone(state.data);
-    copy.name = (copy.name || 'Sin nombre') + ' (copia)';
-    await createNew(copy, state.portrait);
-  });
-  $('#btn-del').addEventListener('click', async () => {
-    if (state.id == null) return;
-    const used = Mesa.cache.sessions.filter(s => Object.values(s.attendance || {}).some(a => a.characterId === state.id)).length;
-    const warn = used ? `\n\nEste personaje aparece en ${used} sesión${used === 1 ? '' : 'es'}: allí se verá como "(ficha borrada)"; las estadísticas no cambian.` : '';
-    if (!confirm(`¿Borrar la ficha "${state.data.name || 'Sin nombre'}"? No se puede deshacer.${warn}`)) return;
-    clearTimeout(saveTimer);
-    dirty = false;
-    await Store.remove(state.id);
-    state.id = null;
-    const recs = await refreshList();
-    if (recs.length) await open(recs[0].id);
-    else await createNew();
-  });
-  $('#btn-export').addEventListener('click', async () => {
-    await save();
-    download(`${slug(state.data.name)}.json`, { app: 'ogoa-fichas', version: 1, data: state.data, portrait: state.portrait });
-  });
-  $('#btn-export-all').addEventListener('click', async () => {
-    await save();
-    await Mesa.flushAll();
-    status('Preparando copia…');
-    const recs = await Promise.all((await Store.all()).map(r => Store.get(r.id)));
-    await Mesa.load();
-    await Editor.flush();
-    const layouts = await Editor.snapshot();
-    status('Copia descargada');
-    const stamp = new Date().toISOString().slice(0, 10);
-    download(`fichas-ogoa-${stamp}.json`, {
-      app: 'ogoa-fichas', version: 2,
-      characters: recs.map(r => ({ id: r.id, data: r.data, portrait: r.portrait })),
-      ...Mesa.snapshot(),
-      layouts,
-    });
-  });
-  $('#btn-import').addEventListener('click', () => $('#import-file').click());
+  $('#btn-back').addEventListener('click', backToContext);
+  $('#btn-export-all').addEventListener('click', exportBackup);
+  $('#btn-import').addEventListener('click', () => chooseImport(null));
   $('#import-file').addEventListener('change', async e => {
-    await importFiles([...e.target.files]);
+    const files = [...e.target.files];
     e.target.value = '';
-  });
-
-  // imprimir: menú con ambas caras / solo anverso / solo reverso
-  const printBtn = $('#btn-print'), printMenu = $('#print-menu');
-  const toggleMenu = show => {
-    printMenu.hidden = !show;
-    printBtn.setAttribute('aria-expanded', String(show));
-  };
-  printBtn.addEventListener('click', () => toggleMenu(printMenu.hidden));
-  document.addEventListener('click', e => { if (!e.target.closest('.menu-wrap')) toggleMenu(false); });
-  printMenu.addEventListener('click', async e => {
-    const what = e.target.dataset.print;
-    if (!what) return;
-    toggleMenu(false);
-    if (editor) closeEditor();
-    await save();
-    printSel = what;
-    markPrint();
-    window.print();
-    printSel = 'all';
+    const t = importTarget;
+    importTarget = null;
+    if (files.length) await importFiles(files, t);
   });
 
   // ayuda de Markdown
@@ -739,9 +893,9 @@ async function init() {
   $('#btn-help').addEventListener('click', () => { help.hidden = false; $('.close', help).focus(); });
   help.addEventListener('click', e => { if (e.target === help || e.target.closest('[data-close]')) help.hidden = true; });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { if (!help.hidden) help.hidden = true; toggleMenu(false); }
+    if (e.key === 'Escape' && !help.hidden) help.hidden = true;
   });
-  window.addEventListener('beforeprint', () => { if (editor) closeEditor(); markPrint(); });
+  window.addEventListener('beforeprint', () => { if (editor) closeEditor(); });
   window.addEventListener('beforeunload', e => {
     if (dirty || Mesa.hasPending() || Editor.hasPending()) { save(); Mesa.flushAll(); Editor.flush(); e.preventDefault(); }
   });
@@ -781,9 +935,8 @@ async function startSession(user) {
   if (!user) { showLogin(); return; }
   if (sessionStarted) return;
   showLogin('Conectando como ' + user.email + '…', 'busy');
-  let recs;
   try {
-    recs = await refreshList();
+    await loadCharacters();
   } catch (e) {
     if (e.code === 'permission-denied') {
       showLogin(`La cuenta ${user.email} no tiene acceso a estas fichas. Pide al administrador que la autorice, o entra con otra cuenta.`, 'denied');
@@ -802,17 +955,20 @@ async function startSession(user) {
   // jugadores, partidas y sesiones; las fichas antiguas con "Jugador" escrito a mano se enlazan solas
   try {
     await Mesa.load();
-    const linked = await Mesa.migratePlayers();
-    if (linked) recs = await refreshList();
+    if (await Mesa.migratePlayers()) await loadCharacters();
   } catch (e) {
     status('No se pudieron cargar jugadores y partidas: ' + (e.code || e.message), true);
   }
 
-  let last = null, view = location.hash.slice(1);
-  try { last = localStorage.getItem('ogoa-last'); view ||= localStorage.getItem('ogoa-view'); } catch { /* nada */ }
-  if (!recs.length) await createNew();
-  else await open(recs.some(r => r.id === last) ? last : recs[0].id);
-  Mesa.showView(view || 'fichas');
+  // se vuelve a donde se estaba: una ficha (con su contexto) o una pestaña
+  let last = null, vc = null, view = location.hash.slice(1);
+  try {
+    last = localStorage.getItem('ogoa-last');
+    vc = JSON.parse(localStorage.getItem('ogoa-ctx') || 'null');
+    view ||= localStorage.getItem('ogoa-view');
+  } catch { /* nada */ }
+  if (view === 'fichas' && last && charById(last) && (await open(last, validContext(vc) ? vc : null))) Mesa.showView('fichas');
+  else Mesa.showView(view && view !== 'fichas' ? view : 'jugadores');
   checkLocal();
 }
 
@@ -834,18 +990,18 @@ async function migrateLocal() {
   if (!confirm(`Se subirán a la nube estas fichas guardadas en este navegador:\n\n${names}\n\n¿Continuar?`)) return;
   const btn = $('#btn-migrate');
   btn.disabled = true;
-  let n = 0, firstId = null;
+  let n = 0;
   try {
     for (const r of local) {
       status(`Subiendo ${n + 1} de ${local.length}…`);
-      const rec = await Store.create(normalize(r.data), await shrinkPortrait(r.portrait));
-      firstId ??= rec.id;
+      await Store.create(normalize(r.data), await shrinkPortrait(r.portrait));
       n++;
     }
     try { localStorage.setItem(MIGRATED, '1'); } catch { /* nada */ }
     btn.hidden = true;
-    await refreshList();
-    await open(firstId);
+    await loadCharacters();
+    if (await Mesa.migratePlayers()) await loadCharacters();
+    Mesa.refresh();
     status(`Subidas ${n} ficha${n > 1 ? 's' : ''} a la nube`);
   } catch (e) {
     status(`Error al subir (${n} subidas): ${e.code || e.message}`, true);

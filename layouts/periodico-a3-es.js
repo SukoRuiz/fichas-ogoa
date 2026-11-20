@@ -66,6 +66,7 @@ const back = [
 export default {
   id: 'periodico-a3-es',
   name: 'Periódico A3 OGOA Español',
+  size: 'A3', // papel al imprimir o exportar: A4, A3 o Letter
   version: 2, // súbelo al cambiar la plantilla o las zonas: descarta las versiones guardadas anteriores
   pages: [
     { id: 'front', name: 'Anverso', width: 1491, height: 1055, orientation: 'landscape', background: 'img/periodico-a3-es-anverso.png', fields: front },

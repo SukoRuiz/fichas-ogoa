@@ -8,9 +8,10 @@
  * Un layout incluido que se edita se guarda como versión modificada del mismo id.
  */
 import { LayoutDocs, LayoutImages } from './store.js';
-import { LAYOUTS, getLayout, setStored, toDoc, orientationOf } from './layouts/index.js';
+import { LAYOUTS, getLayout, setStored, toDoc, orientationOf, builtinOf, PAPERS, paperOf } from './layouts/index.js';
 import { CATALOG, TABLES, KIND_LABEL, catalogItem, tableCols } from './layouts/fields.js';
 import { renderReadOnly } from './sheet.js';
+import { decider } from './ui.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -20,7 +21,7 @@ const r2 = v => Math.round(v * 2) / 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const imgKey = (lid, pid) => `${lid}__${pid}`;
 
-let ctx = null;       // { status, download, campaignsUsing(id), characters(), currentCharacter(), loadCharacter(id) }
+let ctx = null;       // { status, download, campaignsUsing(id), characters(), currentCharacter(), loadCharacter(id), openCharacter(id), playerName(id) }
 let stored = [];      // documentos guardados en Firestore ({ id, name, pages })
 const imgCache = new Map();
 const ui = { id: null, page: 0, sel: -1, zoom: 'fit', pending: null, mode: 'view', charId: null, char: null };
@@ -122,8 +123,9 @@ export function init(context) {
   $('#btn-new-layout').addEventListener('click', newLayout);
   $('#btn-import-layout').addEventListener('click', () => $('#layout-file').click());
   $('#layout-file').addEventListener('change', async e => {
+    const decide = decider();
     for (const f of e.target.files) {
-      try { await importLayout(JSON.parse(await f.text())); }
+      try { await importLayout(JSON.parse(await f.text()), decide); }
       catch (err) { ctx.status(`No se pudo importar ${f.name}: ${err.message}`, true); }
     }
     e.target.value = '';
@@ -146,7 +148,7 @@ function describe(l) {
   const n = l.pages.length;
   const o = [...new Set(l.pages.map(orientationOf))].map(x => (x === 'portrait' ? 'vertical' : 'horizontal')).join(' y ');
   const uses = ctx.campaignsUsing(l.id);
-  return [kind, `${n} pág.${n ? ' ' + o : ''}`, uses && `${uses} partida${uses === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
+  return [kind, `${n} pág.${n ? ' ' + o : ''}`, PAPERS[paperOf(l)].label, uses && `${uses} partida${uses === 1 ? '' : 's'}`].filter(Boolean).join(' · ');
 }
 
 function renderList() {
@@ -161,6 +163,20 @@ function renderList() {
     li.addEventListener('click', () => { select(l.id); render(); });
     ul.appendChild(li);
   }
+}
+
+/** Desplegable de fichas agrupadas por jugador (las sin jugador, al final). */
+function charOptions(chars) {
+  if (!chars.length) return '<option value="">No hay fichas</option>';
+  const groups = new Map();
+  for (const c of chars) {
+    const k = ctx.playerName(c.data.playerId) || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  const keys = [...groups.keys()].sort((a, b) => (!a) - (!b) || a.localeCompare(b, 'es', { sensitivity: 'base' }));
+  return keys.map(k => `<optgroup label="${esc(k || 'Sin jugador')}">${groups.get(k).map(c =>
+    `<option value="${esc(c.id)}"${c.id === ui.charId ? ' selected' : ''}>${esc(c.data.name || 'Sin nombre')}</option>`).join('')}</optgroup>`).join('');
 }
 
 export async function render() {
@@ -184,10 +200,12 @@ export async function render() {
         <button type="button" data-mode="view" aria-pressed="${!ed}" title="Ver el layout con los datos de una ficha">Ver</button>
         <button type="button" data-mode="edit" aria-pressed="${ed}" title="Cambiar páginas y zonas">Editar</button>
       </div>
-      ${ed ? '' : `<label class="ly-char">Ficha <select id="ly-char">${chars.map(c => `<option value="${esc(c.id)}"${c.id === ui.charId ? ' selected' : ''}>${esc(c.data.name || 'Sin nombre')}${c.data.player ? ` · ${esc(c.data.player)}` : ''}</option>`).join('') || '<option value="">No hay fichas</option>'}</select></label>`}
+      ${ed ? '' : `<label class="ly-char">Ficha <select id="ly-char">${charOptions(chars)}</select></label>
+        <button type="button" class="btn" id="ly-open" title="Abre esta ficha para editarla"${ui.charId ? '' : ' disabled'}>Abrir ficha</button>`}
       <span class="grow"></span>
       <button type="button" class="btn" data-a="dup">Duplicar</button>
       <button type="button" class="btn" data-a="export" title="Descarga el layout con sus imágenes (.json)">Exportar</button>
+      ${ed ? `<label class="ly-size" title="Papel al imprimir o exportar las fichas con este layout">Papel <select id="ly-size">${Object.entries(PAPERS).map(([k, p]) => `<option value="${k}"${paperOf(l) === k ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>` : ''}
       ${ed && l.custom ? '<button type="button" class="btn danger" data-a="delete">Borrar layout</button>' : ''}
       ${l.modified ? '<button type="button" class="btn danger" data-a="revert" title="Descarta los cambios guardados en la web y vuelve al layout incluido en la aplicación">Volver al original</button>' : ''}
     </div>
@@ -221,7 +239,9 @@ export async function render() {
     ui.sel = -1;
     render();
   });
-  $('#ly-char', root)?.addEventListener('change', e => { ui.charId = e.target.value; ui.char = null; renderCanvas(); });
+  $('#ly-char', root)?.addEventListener('change', e => { ui.charId = e.target.value; ui.char = null; $('#ly-open', root).disabled = !ui.charId; renderCanvas(); });
+  $('#ly-open', root)?.addEventListener('click', () => { if (ui.charId) ctx.openCharacter(ui.charId); });
+  $('#ly-size', root)?.addEventListener('change', e => { l.size = e.target.value; changed(l); renderList(); });
   for (const b of $$('[data-page]', root)) b.addEventListener('click', () => { ui.page = +b.dataset.page; ui.sel = -1; render(); });
   for (const b of $$('[data-a]', root)) b.addEventListener('click', () => action(b.dataset.a));
   if (pg) {
@@ -264,7 +284,7 @@ async function action(a) {
         pages.push({ id: p.id, name: p.name, width: p.width, height: p.height, orientation: p.orientation || '', image: await urlToDataURL(p.background), fields: clean(p.fields) });
       }
       ctx.download(`layout-${(l.name || 'ficha').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_')}.json`,
-        { app: 'ogoa-layout', version: 1, layout: { name: l.name, pages } });
+        { app: 'ogoa-layout', version: 1, layout: { id: l.id, name: l.name, size: paperOf(l), pages } });
       return ctx.status('Layout exportado');
     }
     if (a === 'revert') {
@@ -355,26 +375,62 @@ async function onPageImage(file) {
   }
 }
 
-/** Importa un layout exportado (crea uno nuevo; no sustituye a ninguno). */
-async function importLayout(json) {
+/**
+ * Importa un layout exportado. Si ya existe uno con el mismo id o el mismo nombre,
+ * pregunta si se sobrescribe (conserva el id, así las partidas siguen usándolo),
+ * si se crea otro nuevo o si se cancela.
+ */
+export async function importLayout(json, decide = decider()) {
   const L = json.layout || json;
   if (!Array.isArray(L.pages)) throw new Error('no es un layout');
-  const nid = LayoutDocs.newId();
+  const key = n => (n || '').trim().toLocaleLowerCase('es');
+  const same = getLayout(L.id) || LAYOUTS.find(x => key(x.name) === key(L.name));
+  let nid = LayoutDocs.newId(), overwrite = false;
+  if (same) {
+    const uses = ctx.campaignsUsing(same.id);
+    const v = await decide('layout', {
+      title: 'Ese layout ya existe',
+      html: `<p>Ya hay un layout <b>${esc(same.name)}</b>${same.builtin ? ' (incluido en la aplicación)' : ''}${uses ? `, que usan ${uses} partida${uses === 1 ? '' : 's'}` : ''}.</p>
+        <p>¿Sustituirlo por el que estás importando o crear uno nuevo aparte?</p>
+        ${same.builtin ? '<p class="hint">Si sustituyes un layout incluido se guarda como versión modificada; «Volver al original» lo deshace.</p>' : ''}`,
+      buttons: [{ v: 'overwrite', label: 'Sobrescribir', primary: true }, { v: 'new', label: 'Crear uno nuevo' }, { v: 'skip', label: 'Cancelar' }],
+      cancel: 'skip', remember: '',
+    });
+    if (v === 'skip') { ctx.status('Importación del layout cancelada'); return null; }
+    if (v === 'overwrite') { nid = same.id; overwrite = true; }
+  }
+  const old = overwrite ? stored.find(x => x.id === nid) : null;
   const pages = [];
   for (const [i, p] of L.pages.entries()) {
     const pid = p.id || 'p' + i;
     const img = typeof p.image === 'string' && p.image.startsWith('data:') ? p.image : '';
-    if (img) await LayoutImages.set(imgKey(nid, pid), { img });
+    if (img) {
+      await LayoutImages.set(imgKey(nid, pid), { img });
+      imgCache.set(imgKey(nid, pid), img);
+    }
     pages.push({ id: pid, name: p.name || '', width: +p.width, height: +p.height, orientation: p.orientation || '', image: !!img, background: img ? '' : (p.background || ''), fields: p.fields || [] });
   }
-  const name = L.name && !LAYOUTS.some(x => x.name === L.name) ? L.name : `${L.name || 'Layout'} (importado)`;
-  const d = clean({ name, pages });
+  // imágenes de páginas que ya no están en el layout sobrescrito
+  for (const p of old?.pages || []) {
+    if (p.image && !pages.some(q => q.id === p.id && q.image)) {
+      await LayoutImages.remove(imgKey(nid, p.id));
+      imgCache.delete(imgKey(nid, p.id));
+    }
+  }
+  let name = L.name || 'Layout';
+  if (!overwrite && LAYOUTS.some(x => x.name === name)) name = `${name} (importado)`;
+  const d = clean({ name, size: PAPERS[L.size] ? L.size : 'A4', baseVersion: builtinOf(nid)?.version || 0, pages });
+  clearTimeout(timers.get(nid));
+  timers.delete(nid);
   await LayoutDocs.set(nid, d);
   upsertStored({ id: nid, ...d });
   setStored(stored);
+  const l = getLayout(nid);
+  if (l) l._rev = Date.now(); // las hojas abiertas con este layout se reconstruyen
   select(nid);
-  ctx.status(`Layout "${name}" importado`);
+  ctx.status(`Layout "${name}" ${overwrite ? 'sobrescrito' : 'importado'}`);
   if (visible()) await render();
+  return nid;
 }
 
 /** Para la copia de seguridad completa: layouts guardados con sus imágenes. */
@@ -388,17 +444,34 @@ export async function snapshot() {
   }
   return out;
 }
-/** Restaura layouts de una copia de seguridad (mismo id, así las partidas siguen apuntando a ellos). */
-export async function restore(list) {
+/**
+ * Restaura layouts de una copia de seguridad (mismo id, así las partidas siguen apuntando a ellos).
+ * Si ya hay uno guardado con ese id, pregunta antes de sobrescribirlo.
+ */
+export async function restore(list, decide = decider()) {
+  let n = 0;
   for (const it of list || []) {
     const { id, images = {}, ...d } = it;
     if (!id) continue;
+    const prev = stored.find(x => x.id === id);
+    if (prev) {
+      const v = await decide('layout-backup', {
+        title: 'Ese layout ya existe',
+        html: `<p>La copia trae el layout <b>${esc(d.name || id)}</b>, que ya está guardado${prev.name && prev.name !== d.name ? ` (ahora se llama <b>${esc(prev.name)}</b>)` : ''}.</p><p>¿Sustituirlo por el de la copia?</p>`,
+        buttons: [{ v: 'overwrite', label: 'Sobrescribir', primary: true }, { v: 'keep', label: 'Conservar el actual' }],
+        cancel: 'keep', remember: 'Hacer lo mismo con los demás layouts de la copia',
+      });
+      if (v === 'keep') continue;
+    }
+    n++;
+    for (const pid of Object.keys(images)) imgCache.delete(imgKey(id, pid));
     for (const [pid, img] of Object.entries(images)) if (img) await LayoutImages.set(imgKey(id, pid), { img });
     await LayoutDocs.set(id, clean(d));
     upsertStored({ id, ...d });
   }
   setStored(stored);
-  return (list || []).length;
+  for (const it of list || []) { const l = getLayout(it.id); if (l) l._rev = Date.now(); }
+  return n;
 }
 
 /* =====================================================================

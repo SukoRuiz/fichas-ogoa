@@ -141,6 +141,94 @@ export function summarize(sessions, campaignsById) {
   return out;
 }
 
+const hoursOf = v => {
+  const h = parseFloat(String(v ?? '').replace(',', '.'));
+  return h > 0 ? h : null;
+};
+export const addDays = (iso, d) => {
+  const t = new Date(iso + 'T12:00:00');
+  t.setDate(t.getDate() + Math.round(d));
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * Avance de una partida respecto a su objetivo total de horas (`targetHours`).
+ * Usa todas las sesiones de la partida (sin filtro de fechas).
+ *
+ *  - real / pct / remaining: horas reales acumuladas, % del objetivo y lo que falta.
+ *  - Plan: con la duración prevista por sesión y la periodicidad prevista salen las
+ *    sesiones previstas, la fecha de fin prevista y lo que se esperaría llevar hoy.
+ *  - Estimación: al ritmo real (duración media real y días medios entre sesiones)
+ *    salen las sesiones que faltan y la fecha de fin estimada.
+ */
+export function progress(c, sessions) {
+  const sum = summarize(sessions, new Map([[c.id, c]]));
+  const T = hoursOf(c.targetHours), per = hoursOf(c.plannedHours), freq = +c.frequency || 0;
+  const out = { sum, target: T != null ? T * 60 : null, real: sum.real, planned: sum.planned };
+  if (out.target == null) return out;
+  const start = c.startDate || sum.first || null;
+  out.start = start;
+  out.pct = sum.real / out.target;
+  out.remaining = Math.max(0, out.target - sum.real);
+  out.done = out.remaining === 0;
+  // plan teórico
+  if (per) {
+    out.plannedSessions = Math.ceil(out.target / (per * 60));
+    if (start && freq) {
+      out.plannedEnd = addDays(start, (out.plannedSessions - 1) * freq);
+      const elapsed = dayDiff(start, today());
+      out.expectedNow = elapsed < 0 ? 0 : Math.min(out.target, (Math.floor(elapsed / freq) + 1) * per * 60);
+      out.vsPlan = sum.real - out.expectedNow;
+    }
+  }
+  // estimación al ritmo real
+  const avg = sum.avgReal ?? (per ? per * 60 : null);
+  const interval = sum.avgInterval ?? (freq || null);
+  if (out.done) out.estEnd = sum.last;
+  else if (avg) {
+    out.sessionsLeft = Math.ceil(out.remaining / avg);
+    if (interval) {
+      // la próxima sesión: tras la última al ritmo medio, pero no antes de hoy
+      let next = sum.last ? addDays(sum.last, interval) : (start && start > today() ? start : today());
+      if (next < today()) next = today();
+      out.estEnd = addDays(next, (out.sessionsLeft - 1) * interval);
+    }
+  }
+  if (out.estEnd && out.plannedEnd) out.delayDays = dayDiff(out.plannedEnd, out.estEnd);
+  // ritmo: horas reales por mes desde el inicio
+  if (start && sum.last) {
+    const months = Math.max(1, dayDiff(start, sum.last) / 30.44);
+    out.perMonth = sum.real / months;
+  }
+  return out;
+}
+
+/** Puntos del gráfico de avance: horas reales acumuladas, plan y estimación. */
+export function progressSeries(c, sessions, pr = progress(c, sessions)) {
+  const ms = d => Date.parse(d + 'T12:00:00');
+  const played = sessions.filter(s => s.status === 'jugada' && s.date).sort(bySessionDate);
+  const real = [];
+  let acc = 0;
+  const start = pr.start || played[0]?.date;
+  if (start) real.push({ t: ms(start), v: 0, tip: `Inicio · ${fmtDate(start)}` });
+  for (const s of played) {
+    const r = realMin(s);
+    if (r == null) continue;
+    acc += r;
+    real.push({ t: ms(s.date), v: acc / 60, tip: `${fmtDate(s.date)}${s.title ? ' · ' + s.title : ''}\n+${fmtDur(r)} → ${fmtH(acc)}${pr.target ? ` (${fmtPct(acc / pr.target)})` : ''}` });
+  }
+  const series = [{ cls: 'ln-real', points: real, dots: true }];
+  if (pr.target && start && pr.plannedEnd) {
+    series.push({ cls: 'ln-plan', points: [{ t: ms(start), v: 0 }, { t: ms(pr.plannedEnd), v: pr.target / 60, tip: `Fin previsto · ${fmtDate(pr.plannedEnd)}` }], dots: 'last' });
+  }
+  if (pr.target && pr.estEnd && !pr.done && real.length) {
+    const last = real.at(-1);
+    series.push({ cls: 'ln-est', points: [{ t: last.t, v: last.v }, { t: ms(pr.estEnd), v: pr.target / 60, tip: `Fin estimado al ritmo actual · ${fmtDate(pr.estEnd)}` }], dots: 'last' });
+  }
+  const refs = pr.target ? [{ v: pr.target / 60, label: `Objetivo ${fmtNum(pr.target / 60)} h`, cls: 'ref-target' }] : [];
+  return { series, refs, todayT: ms(today()) };
+}
+
 /** Asistencia y horas por jugador sobre sesiones jugadas. */
 export function byPlayer(sessions, campaignsById) {
   const m = new Map();
@@ -244,6 +332,62 @@ export function columnChart(host, { items, yFmt = v => fmtNum(v), height = 220, 
   });
   g += `<line class="axis" x1="${padL}" x2="${W - padR}" y1="${Y(0)}" y2="${Y(0)}"/>`;
   host.innerHTML = `<div class="viz-scroll"><svg class="viz" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div>`;
+}
+
+/**
+ * Líneas en el tiempo. series: [{ cls, points: [{ t (ms), v, tip? }], dots: true | 'last' }]
+ * refs: líneas horizontales de referencia [{ v, label, cls }]; todayT marca el día de hoy.
+ */
+export function timeChart(host, { series, refs = [], todayT = null, yFmt = v => fmtNum(v), height = 240 }) {
+  const pts = series.flatMap(s => s.points);
+  if (pts.length < 2) { host.innerHTML = '<p class="viz-empty">Sin datos suficientes todavía.</p>'; return; }
+  const padL = 44, padR = 16, padT = 16, padB = 30;
+  const W = Math.max(320, host.clientWidth || 600), H = height, iw = W - padL - padR, ih = H - padT - padB;
+  let t0 = Math.min(...pts.map(p => p.t)), t1 = Math.max(...pts.map(p => p.t));
+  if (todayT != null && todayT > t0 && todayT < t1 + 86400000 * 400) t1 = Math.max(t1, todayT);
+  if (t1 - t0 < 86400000 * 14) { t0 -= 86400000 * 7; t1 += 86400000 * 7; }
+  const ticks = niceTicks(Math.max(...pts.map(p => p.v), ...refs.map(r => r.v)));
+  const top = ticks.at(-1) || 1;
+  const X = t => padL + (t - t0) / (t1 - t0) * iw, Y = v => padT + ih - (v / top) * ih;
+  let g = '';
+  for (const v of ticks) {
+    g += `<line class="grid" x1="${padL}" x2="${W - padR}" y1="${Y(v)}" y2="${Y(v)}"/>`;
+    g += `<text class="tick" x="${padL - 6}" y="${Y(v) + 4}" text-anchor="end">${escText(yFmt(v))}</text>`;
+  }
+  // meses en el eje x (como mucho ~6 etiquetas)
+  const d0 = new Date(t0), months = [];
+  for (let d = new Date(d0.getFullYear(), d0.getMonth() + 1, 1); d.getTime() <= t1; d.setMonth(d.getMonth() + 1)) months.push(new Date(d));
+  const every = Math.max(1, Math.ceil(months.length / 6));
+  months.forEach((d, i) => {
+    if (i % every) return;
+    const x = X(d.getTime());
+    g += `<line class="grid" x1="${x}" x2="${x}" y1="${padT}" y2="${padT + ih}"/>`;
+    g += `<text class="xlab" x="${x}" y="${H - padB + 16}" text-anchor="middle">${escText(d.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' }))}</text>`;
+  });
+  if (todayT != null && todayT >= t0 && todayT <= t1) {
+    g += `<line class="today" x1="${X(todayT)}" x2="${X(todayT)}" y1="${padT}" y2="${padT + ih}"/><text class="xlab today-l" x="${X(todayT) + 4}" y="${padT + 10}">hoy</text>`;
+  }
+  for (const r of refs) {
+    g += `<line class="${r.cls}" x1="${padL}" x2="${W - padR}" y1="${Y(r.v)}" y2="${Y(r.v)}"/>`;
+    g += `<text class="ref-l" x="${W - padR - 4}" y="${Y(r.v) - 5}" text-anchor="end">${escText(r.label)}</text>`;
+  }
+  for (const s of series) {
+    if (s.points.length < 2) continue;
+    g += `<path class="${s.cls}" d="${s.points.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)},${Y(p.v).toFixed(1)}`).join('')}"/>`;
+    const dots = s.dots === 'last' ? [s.points.at(-1)] : s.dots ? s.points : [];
+    for (const p of dots) {
+      g += `<circle class="${s.cls} dot" cx="${X(p.t)}" cy="${Y(p.v)}" r="3.5"/>`;
+      if (p.tip) g += `<circle class="hit" cx="${X(p.t)}" cy="${Y(p.v)}" r="10" data-tip="${escAttr(p.tip)}"/>`;
+    }
+  }
+  g += `<line class="axis" x1="${padL}" x2="${W - padR}" y1="${Y(0)}" y2="${Y(0)}"/>`;
+  host.innerHTML = `<div class="viz-scroll"><svg class="viz" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img">${g}</svg></div>`;
+}
+
+/** Barra de avance (HTML): value 0..1 (puede pasar de 1), mark: posición de referencia 0..1. */
+export function progressBar(value, mark = null, label = '') {
+  const v = Math.max(0, value || 0);
+  return `<div class="pbar${v >= 1 ? ' full' : ''}" title="${escAttr(label)}"><span class="pbar-fill" style="width:${Math.min(1, v) * 100}%"></span>${mark != null ? `<span class="pbar-mark" style="left:${Math.min(1, Math.max(0, mark)) * 100}%" title="Lo previsto a día de hoy"></span>` : ''}</div>`;
 }
 
 /** Barras horizontales (HTML). items: [{ label, value (0..1), text, tip }] */
